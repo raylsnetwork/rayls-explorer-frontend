@@ -9,7 +9,6 @@ import config from 'configs/app';
 import type { ResourceError } from 'lib/api/resources';
 import useApiQuery from 'lib/api/useApiQuery';
 import useFetch from 'lib/hooks/useFetch';
-import useIssueUrl from 'lib/hooks/useIssueUrl';
 import { Link } from 'toolkit/chakra/link';
 import { Skeleton } from 'toolkit/chakra/skeleton';
 import { copy } from 'toolkit/utils/htmlEntities';
@@ -35,7 +34,6 @@ const Footer = () => {
     },
   });
   const apiVersionUrl = getApiVersionUrl(backendVersionData?.backend_version);
-  const issueUrl = useIssueUrl(backendVersionData?.backend_version);
 
   const RAYLS_LINKS = [
     {
@@ -64,44 +62,6 @@ const Footer = () => {
     },
   ];
 
-  const BLOCKSCOUT_LINKS = [
-    {
-      icon: 'edit' as const,
-      iconSize: '16px',
-      text: 'Submit an issue',
-      url: issueUrl,
-    },
-    {
-      icon: 'social/git' as const,
-      iconSize: '18px',
-      text: 'Contribute',
-      url: 'https://github.com/blockscout/blockscout',
-    },
-    {
-      icon: 'social/twitter' as const,
-      iconSize: '18px',
-      text: 'X (ex-Twitter)',
-      url: 'https://x.com/blockscout',
-    },
-    {
-      icon: 'social/discord' as const,
-      iconSize: '24px',
-      text: 'Discord',
-      url: 'https://discord.gg/blockscout',
-    },
-    {
-      icon: 'brands/blockscout' as const,
-      iconSize: '18px',
-      text: 'All chains',
-      url: 'https://www.blockscout.com/chains-and-projects',
-    },
-    {
-      icon: 'donate' as const,
-      iconSize: '20px',
-      text: 'Donate',
-      url: 'https://eth.blockscout.com/address/0xfB4aF6A8592041E9BcE186E5aC4BDbd2B137aD11',
-    },
-  ];
 
   const frontendLink = (() => {
     if (config.UI.footer.frontendVersion) {
@@ -234,7 +194,6 @@ const Footer = () => {
             {
               ([
                 { title: 'Rayls', links: RAYLS_LINKS },
-                { title: 'Blockscout', links: BLOCKSCOUT_LINKS },
                 ...(linksData || []),
               ])
                 .slice(0, colNum)
@@ -275,8 +234,8 @@ const Footer = () => {
           gap={{ base: 6, lg: 8 }}
           gridTemplateColumns={{
             base: 'repeat(auto-fill, 160px)',
-            lg: 'repeat(2, 160px)',
-            xl: 'repeat(2, 160px)',
+            lg: 'repeat(1, 160px)',
+            xl: 'repeat(1, 160px)',
           }}
           alignContent="start"
           justifyContent={{ lg: 'flex-end' }}
@@ -286,12 +245,6 @@ const Footer = () => {
             <Text fontWeight={ 500 } mb={ 3 } textStyle="xs">Rayls</Text>
             <VStack gap={ 1 } alignItems="start">
               { RAYLS_LINKS.map(link => <FooterLinkItem { ...link } key={ link.text }/>) }
-            </VStack>
-          </Box>
-          <Box>
-            <Text fontWeight={ 500 } mb={ 3 } textStyle="xs">Blockscout</Text>
-            <VStack gap={ 1 } alignItems="start">
-              { BLOCKSCOUT_LINKS.map(link => <FooterLinkItem { ...link } key={ link.text }/>) }
             </VStack>
           </Box>
         </Grid>
