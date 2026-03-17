@@ -57,7 +57,7 @@ const NavigationDesktop = () => {
       borderRight="1px solid"
       borderColor="border.divider"
       px={{ lg: isExpanded ? 6 : 4, xl: isCollapsed ? 4 : 6 }}
-      pt={ 12 }
+      pt={ 18 }
       pb={ 6 }
       width={{ lg: isExpanded ? '229px' : '92px', xl: isCollapsed ? '92px' : '229px' }}
       onClick={ handleContainerClick }
@@ -76,7 +76,7 @@ const NavigationDesktop = () => {
         w="100%"
         pl={{ lg: isExpanded ? 3 : '15px', xl: isCollapsed ? '15px' : 3 }}
         pr={{ lg: isExpanded ? 0 : '15px', xl: isCollapsed ? '15px' : 0 }}
-        h={ 10 }
+        h={ 16 }
         transitionProperty="padding"
         transitionDuration="normal"
         transitionTimingFunction="ease"
