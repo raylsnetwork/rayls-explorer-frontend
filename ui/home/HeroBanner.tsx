@@ -68,11 +68,7 @@ const HeroBanner = () => {
             fontWeight={{ base: 500, lg: 700 }}
             color={ textColor }
           >
-            {
-              config.meta.seo.enhancedDataEnabled ?
-                `${ config.chain.name } blockchain explorer` :
-                `${ config.chain.name } explorer`
-            }
+            { `The ${ config.chain.name } Explorer` }
           </Heading>
           { config.UI.navigation.layout === 'vertical' && (
             <Box display={{ base: 'none', lg: 'flex' }} gap={ 2 }>

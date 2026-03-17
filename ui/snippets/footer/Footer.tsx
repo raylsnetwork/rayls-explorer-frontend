@@ -37,6 +37,17 @@ const Footer = () => {
   const apiVersionUrl = getApiVersionUrl(backendVersionData?.backend_version);
   const issueUrl = useIssueUrl(backendVersionData?.backend_version);
 
+  const RAYLS_LINKS = [
+    {
+      text: 'Website',
+      url: 'https://www.rayls.com/',
+    },
+    {
+      text: 'YouTube',
+      url: 'https://www.youtube.com/@Rayls_blockchain',
+    },
+  ];
+
   const BLOCKSCOUT_LINKS = [
     {
       icon: 'edit' as const,
@@ -207,6 +218,7 @@ const Footer = () => {
             {
               ([
                 { title: 'Blockscout', links: BLOCKSCOUT_LINKS },
+                { title: 'Rayls', links: RAYLS_LINKS },
                 ...(linksData || []),
               ])
                 .slice(0, colNum)
@@ -244,23 +256,28 @@ const Footer = () => {
 
         <Grid
           gridArea={{ lg: 'links-bottom' }}
-          gap={ 1 }
+          gap={{ base: 6, lg: 8 }}
           gridTemplateColumns={{
             base: 'repeat(auto-fill, 160px)',
             lg: 'repeat(2, 160px)',
-            xl: 'repeat(3, 160px)',
+            xl: 'repeat(2, 160px)',
           }}
-          gridTemplateRows={{
-            base: 'auto',
-            lg: 'repeat(3, auto)',
-            xl: 'repeat(2, auto)',
-          }}
-          gridAutoFlow={{ base: 'row', lg: 'column' }}
           alignContent="start"
           justifyContent={{ lg: 'flex-end' }}
           mt={{ base: 8, lg: 0 }}
         >
-          { BLOCKSCOUT_LINKS.map(link => <FooterLinkItem { ...link } key={ link.text }/>) }
+          <Box>
+            <Text fontWeight={ 500 } mb={ 3 } textStyle="xs">Blockscout</Text>
+            <VStack gap={ 1 } alignItems="start">
+              { BLOCKSCOUT_LINKS.map(link => <FooterLinkItem { ...link } key={ link.text }/>) }
+            </VStack>
+          </Box>
+          <Box>
+            <Text fontWeight={ 500 } mb={ 3 } textStyle="xs">Rayls</Text>
+            <VStack gap={ 1 } alignItems="start">
+              { RAYLS_LINKS.map(link => <FooterLinkItem { ...link } key={ link.text }/>) }
+            </VStack>
+          </Box>
         </Grid>
       </Grid>
     </Box>
