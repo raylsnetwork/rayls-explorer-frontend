@@ -39,10 +39,14 @@ const Footer = () => {
 
   const RAYLS_LINKS = [
     {
+      icon: 'globe' as const,
+      iconSize: '18px',
       text: 'Website',
       url: 'https://www.rayls.com/',
     },
     {
+      icon: 'social/youtube' as const,
+      iconSize: '18px',
       text: 'YouTube',
       url: 'https://www.youtube.com/@Rayls_blockchain',
     },

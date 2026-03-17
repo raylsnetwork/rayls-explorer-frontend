@@ -52,7 +52,6 @@ import TxFee from 'ui/shared/tx/TxFee';
 import Utilization from 'ui/shared/Utilization/Utilization';
 import VerificationSteps from 'ui/shared/verificationSteps/VerificationSteps';
 import TxDetailsActions from 'ui/tx/details/txDetailsActions/TxDetailsActions';
-import TxDetailsBurntFees from 'ui/tx/details/TxDetailsBurntFees';
 import TxDetailsFeePerGas from 'ui/tx/details/TxDetailsFeePerGas';
 import TxDetailsGasPrice from 'ui/tx/details/TxDetailsGasPrice';
 import TxDetailsOther from 'ui/tx/details/TxDetailsOther';
@@ -782,8 +781,6 @@ const TxInfo = ({ data, tacOperations, isLoading, socketStatus }: Props) => {
           </DetailedInfo.ItemValue>
         </>
       ) }
-
-      <TxDetailsBurntFees data={ data } isLoading={ isLoading }/>
 
       { rollupFeature.isEnabled && rollupFeature.type === 'optimistic' && (
         <>
