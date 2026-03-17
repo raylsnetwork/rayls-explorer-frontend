@@ -57,7 +57,7 @@ const NavigationDesktop = () => {
       borderRight="1px solid"
       borderColor="border.divider"
       px={{ lg: isExpanded ? 6 : 4, xl: isCollapsed ? 4 : 6 }}
-      pt={ 18 }
+      pt={ 12 }
       pb={ 6 }
       width={{ lg: isExpanded ? '229px' : '92px', xl: isCollapsed ? '92px' : '229px' }}
       onClick={ handleContainerClick }
@@ -65,8 +65,8 @@ const NavigationDesktop = () => {
       transitionDuration="normal"
       transitionTimingFunction="ease"
     >
-      <TestnetBadge position="absolute" pl={ 3 } w="49px" top="34px"/>
-      <RollupStageBadge position="absolute" ml={{ lg: isExpanded ? 3 : '10px', xl: isCollapsed ? '10px' : 3 }} top="34px"/>
+      <TestnetBadge position="absolute" pl={ 3 } w="49px" top="6px"/>
+      <RollupStageBadge position="absolute" ml={{ lg: isExpanded ? 3 : '10px', xl: isCollapsed ? '10px' : 3 }} top="6px"/>
       <Box
         as="header"
         display="flex"
@@ -76,7 +76,7 @@ const NavigationDesktop = () => {
         w="100%"
         pl={{ lg: isExpanded ? 3 : '15px', xl: isCollapsed ? '15px' : 3 }}
         pr={{ lg: isExpanded ? 0 : '15px', xl: isCollapsed ? '15px' : 0 }}
-        h={ 16 }
+        h={ 10 }
         transitionProperty="padding"
         transitionDuration="normal"
         transitionTimingFunction="ease"
