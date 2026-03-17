@@ -39,10 +39,22 @@ const Footer = () => {
 
   const RAYLS_LINKS = [
     {
-      icon: 'globe' as const,
+      icon: 'social/discord' as const,
+      iconSize: '24px',
+      text: 'Discord',
+      url: 'https://discord.gg/6THZ96357r',
+    },
+    {
+      icon: 'social/twitter' as const,
       iconSize: '18px',
-      text: 'Website',
-      url: 'https://www.rayls.com/',
+      text: 'X (ex-Twitter)',
+      url: 'https://x.com/RaylsLabs',
+    },
+    {
+      icon: 'social/linkedin_filled' as const,
+      iconSize: '18px',
+      text: 'LinkedIn',
+      url: 'https://www.linkedin.com/company/rayls/',
     },
     {
       icon: 'social/youtube' as const,
@@ -221,8 +233,8 @@ const Footer = () => {
           >
             {
               ([
-                { title: 'Blockscout', links: BLOCKSCOUT_LINKS },
                 { title: 'Rayls', links: RAYLS_LINKS },
+                { title: 'Blockscout', links: BLOCKSCOUT_LINKS },
                 ...(linksData || []),
               ])
                 .slice(0, colNum)
@@ -271,15 +283,15 @@ const Footer = () => {
           mt={{ base: 8, lg: 0 }}
         >
           <Box>
-            <Text fontWeight={ 500 } mb={ 3 } textStyle="xs">Blockscout</Text>
-            <VStack gap={ 1 } alignItems="start">
-              { BLOCKSCOUT_LINKS.map(link => <FooterLinkItem { ...link } key={ link.text }/>) }
-            </VStack>
-          </Box>
-          <Box>
             <Text fontWeight={ 500 } mb={ 3 } textStyle="xs">Rayls</Text>
             <VStack gap={ 1 } alignItems="start">
               { RAYLS_LINKS.map(link => <FooterLinkItem { ...link } key={ link.text }/>) }
+            </VStack>
+          </Box>
+          <Box>
+            <Text fontWeight={ 500 } mb={ 3 } textStyle="xs">Blockscout</Text>
+            <VStack gap={ 1 } alignItems="start">
+              { BLOCKSCOUT_LINKS.map(link => <FooterLinkItem { ...link } key={ link.text }/>) }
             </VStack>
           </Box>
         </Grid>
