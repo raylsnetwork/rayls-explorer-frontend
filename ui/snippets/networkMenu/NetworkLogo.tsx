@@ -28,7 +28,7 @@ const LogoFallback = ({ isCollapsed, isSmall }: { isCollapsed?: boolean; isSmall
   return (
     <IconSvg
       name={ isSmall ? 'networks/icon-placeholder' : 'networks/logo-placeholder' }
-      width={ isSmall ? '30px' : '120px' }
+      width={ isSmall ? '60px' : '240px' }
       height="100%"
       color={{ base: 'blue.600', _dark: 'white' }}
       display={ display }
@@ -48,8 +48,8 @@ const NetworkLogo = ({ isCollapsed, onClick, className }: Props) => {
     <chakra.a
       className={ className }
       href={ route({ pathname: '/' }) }
-      width={{ base: '120px', lg: isCollapsed === false ? '120px' : '30px', xl: isCollapsed ? '30px' : '120px' }}
-      height={{ base: '24px', lg: isCollapsed === false ? '24px' : '30px', xl: isCollapsed ? '30px' : '24px' }}
+      width={{ base: '240px', lg: isCollapsed === false ? '240px' : '60px', xl: isCollapsed ? '60px' : '240px' }}
+      height={{ base: '48px', lg: isCollapsed === false ? '48px' : '60px', xl: isCollapsed ? '60px' : '48px' }}
       display="inline-flex"
       overflow="hidden"
       onClick={ onClick }
