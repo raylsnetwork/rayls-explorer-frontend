@@ -148,23 +148,24 @@ jobs:
         run: |
           if [[ "${{ needs.scan.outputs.has_critical }}" == "true" ]]; then
             if [[ "${{ inputs.skip_security_gate }}" == "true" ]]; then
-              echo "╔══════════════════════════════════════════════════════════════════╗"
-              echo "║            ⚠️  SECURITY OVERRIDE — DEPLOY UNBLOCKED  ⚠️          ║"
-              echo "╠══════════════════════════════════════════════════════════════════╣"
-              echo "║  CRITICAL vulnerabilities are present in the image.             ║"
-              echo "║  An admin has explicitly overridden the security gate.          ║"
-              echo "║  Override actor : ${{ github.actor }}"
-              echo "║  Audit trail    : GitHub Actions → workflow run history         ║"
-              echo "╚══════════════════════════════════════════════════════════════════╝"
+              echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+              echo "  ⚠️  SECURITY OVERRIDE — DEPLOY UNBLOCKED  ⚠️"
+              echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+              echo "  CRITICAL vulnerabilities are present in the image."
+              echo "  An admin has explicitly overridden the security gate."
+              echo ""
+              echo "  Override actor : ${{ github.actor }}"
+              echo "  Audit trail    : GitHub Actions → workflow run history"
+              echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
               exit 1
             else
-              echo "╔══════════════════════════════════════════════════════════════════╗"
-              echo "║               ❌  SECURITY GATE — DEPLOY BLOCKED  ❌             ║"
-              echo "╠══════════════════════════════════════════════════════════════════╣"
-              echo "║  CRITICAL vulnerabilities were found in the image.              ║"
-              echo "║  To unblock: re-trigger this workflow manually with             ║"
-              echo "║  'skip_security_gate: true'.                                    ║"
-              echo "╚══════════════════════════════════════════════════════════════════╝"
+              echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+              echo "  ❌  SECURITY GATE — DEPLOY BLOCKED  ❌"
+              echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+              echo "  CRITICAL vulnerabilities were found in the image."
+              echo "  To unblock: re-trigger this workflow manually with"
+              echo "  'skip_security_gate: true'."
+              echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
               exit 1
             fi
           else
