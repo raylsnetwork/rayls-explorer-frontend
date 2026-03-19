@@ -120,16 +120,56 @@ jobs:
     secrets: inherit
 
   # ---------------------------------------------------------------------------
-  # Security Gate (centralized workflow)
-  # Auto-passes if no CRITICAL vulns; pauses for admin approval otherwise.
+  # Security Gate (inlined — continue-on-error not supported on reusable workflow calls)
+  # - No CRITICAL vulns           → ✅ green  → deploy proceeds
+  # - CRITICAL vulns, no override → ❌ red    → deploy blocked
+  # - CRITICAL vulns + override   → ⚠️ orange → deploy proceeds (admin audit trail preserved)
   # ---------------------------------------------------------------------------
   gate:
     name: 🛡️ Security Gate
+    runs-on: ubuntu-latest
     needs: [scan]
-    uses: ./.github/workflows/_security-gate.yml
-    with:
-      has_critical: ${{ needs.scan.outputs.has_critical }}
-      override: ${{ inputs.skip_security_gate || false }}
+    continue-on-error: ${{ inputs.skip_security_gate || false }}
+    steps:
+      - name: Verify admin permission
+        if: inputs.skip_security_gate == true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PERMISSION=$(gh api repos/${{ github.repository }}/collaborators/${{ github.actor }}/permission --jq '.role_name' 2>/dev/null || echo "none")
+          if [[ "$PERMISSION" != "admin" ]]; then
+            echo "❌ Only repository admins can override the security gate."
+            echo "Actor '${{ github.actor }}' has permission level: $PERMISSION"
+            exit 1
+          fi
+          echo "✅ Admin permission verified for ${{ github.actor }} (role: $PERMISSION)"
+
+      - name: Evaluate
+        run: |
+          if [[ "${{ needs.scan.outputs.has_critical }}" == "true" ]]; then
+            if [[ "${{ inputs.skip_security_gate }}" == "true" ]]; then
+              echo "╔══════════════════════════════════════════════════════════════════╗"
+              echo "║            ⚠️  SECURITY OVERRIDE — DEPLOY UNBLOCKED  ⚠️          ║"
+              echo "╠══════════════════════════════════════════════════════════════════╣"
+              echo "║  CRITICAL vulnerabilities are present in the image.             ║"
+              echo "║  An admin has explicitly overridden the security gate.          ║"
+              echo "║  Override actor : ${{ github.actor }}"
+              echo "║  Audit trail    : GitHub Actions → workflow run history         ║"
+              echo "╚══════════════════════════════════════════════════════════════════╝"
+              exit 1
+            else
+              echo "╔══════════════════════════════════════════════════════════════════╗"
+              echo "║               ❌  SECURITY GATE — DEPLOY BLOCKED  ❌             ║"
+              echo "╠══════════════════════════════════════════════════════════════════╣"
+              echo "║  CRITICAL vulnerabilities were found in the image.              ║"
+              echo "║  To unblock: re-trigger this workflow manually with             ║"
+              echo "║  'skip_security_gate: true'.                                    ║"
+              echo "╚══════════════════════════════════════════════════════════════════╝"
+              exit 1
+            fi
+          else
+            echo "✅ No CRITICAL vulnerabilities found. Proceeding with deploy."
+          fi
 
   # ---------------------------------------------------------------------------
   # Update Helm Chart (GitOps) (centralized workflow)
@@ -141,7 +181,7 @@ jobs:
     if: >-
       always() &&
       needs.build.result == 'success' &&
-      needs.gate.result == 'success' &&
+      (needs.gate.result == 'success' || (needs.gate.result == 'failure' && (inputs.skip_security_gate || false) == true)) &&
       needs.setup.outputs.should_deploy == 'true'
     uses: ./.github/workflows/_update-helm.yml
     with:
@@ -162,9 +202,9 @@ jobs:
       - name: Pipeline Results
         run: |
           # Determine gate status
-          if [[ "${{ needs.gate.result }}" == "success" && "${{ needs.scan.outputs.has_critical }}" != "true" ]]; then
+          if [[ "${{ needs.gate.result }}" == "success" ]]; then
             GATE_STATUS="✅ Passed (no critical vulns)"
-          elif [[ "${{ needs.gate.result }}" == "success" && "${{ needs.scan.outputs.has_critical }}" == "true" ]]; then
+          elif [[ "${{ needs.gate.result }}" == "failure" && "${{ inputs.skip_security_gate }}" == "true" ]]; then
             GATE_STATUS="⚠️ Override by ${{ github.actor }}"
           elif [[ "${{ needs.gate.result }}" == "failure" ]]; then
             GATE_STATUS="❌ Blocked — re-trigger with skip_security_gate: true to override"
