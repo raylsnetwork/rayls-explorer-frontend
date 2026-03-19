@@ -1,0 +1,44 @@
+# =============================================================================
+# Security History Scan — TruffleHog
+# =============================================================================
+# Scans the full git history for leaked secrets and credentials.
+# Implementation lives in rayls-public-github-workflows (centralized).
+#
+# Triggers:
+#   - Manual (workflow_dispatch): SREs can run on demand with custom options
+#   - Scheduled: every Monday at 08:00 UTC
+# =============================================================================
+
+name: Security History Scan
+
+on:
+  workflow_dispatch:
+    inputs:
+      scan_mode:
+        description: "Findings to report"
+        type: choice
+        options:
+          - verified-only   # TruffleHog confirms the secret is still active
+          - all             # all pattern matches, including expired/example values
+        default: verified-only
+      since_commit:
+        description: "Scan commits after this SHA (leave empty for full history)"
+        required: false
+        type: string
+
+  schedule:
+    - cron: "0 8 * * 1" # Every Monday at 08:00 UTC
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  scan:
+    uses: raylsnetwork/rayls-public-github-workflows/.github/workflows/_security-history-scan.yml@main
+    with:
+      scan_mode: ${{ inputs.scan_mode || 'verified-only' }}
+      since_commit: ${{ inputs.since_commit || '' }}
+    permissions:
+      contents: read
+      issues: write

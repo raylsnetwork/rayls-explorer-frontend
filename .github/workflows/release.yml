@@ -1,104 +1,192 @@
+# =============================================================================
+# Release - Full CI/CD Pipeline
+# =============================================================================
+# Complete release pipeline: Build → Scan → Security Gate → Update Helm
+#
+# Triggers:
+#   - Push to main: Builds DEV image + auto-deploy to DEV (via ArgoCD)
+#   - Manual: Choose environment (prod requires confirmation)
+#
+# Pipeline:
+#   ┌─────────┐     ┌─────────┐     ┌───────────────┐     ┌──────────────┐
+#   │  Build  │ ──► │  Scan   │ ──► │ Security Gate │ ──► │ Update Helm  │
+#   └─────────┘     └─────────┘     └───────────────┘     └──────────────┘
+#
+# Security Gate (after scan):
+#   - No CRITICAL vulns              → passes automatically → deploy proceeds
+#   - CRITICAL vulns                 → gate fails → deploy is blocked
+#   - CRITICAL vulns + admin override → re-trigger manually with
+#                                       skip_security_gate: true
+#     The override actor and timestamp are permanently recorded in
+#     GitHub Actions workflow run history.
+#
+# ⚠️  PROD deploys are MANUAL ONLY via deploy.yml
+# =============================================================================
+
 name: Release
 
 on:
-    workflow_dispatch:
-    release:
-        types: [ released ]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        default: "dev"
+        type: choice
+        options: [dev, prod]
+      deploy:
+        description: "Deploy after build"
+        required: false
+        default: true
+        type: boolean
+      skip_security_gate:
+        description: "Override security gate when CRITICAL vulnerabilities are found (admin only)"
+        required: false
+        default: false
+        type: boolean
+
+  push:
+    branches: [main]
+    paths:
+      - "pages/**"
+      - "ui/**"
+      - "lib/**"
+      - "toolkit/**"
+      - "configs/**"
+      - "nextjs/**"
+      - "public/**"
+      - "package.json"
+      - "package-lock.json"
+      - "yarn.lock"
+      - "Dockerfile"
+      - "next.config.*"
+
+permissions:
+  contents: read
+  security-events: write
 
 jobs:
-    remove_prerelease_label:
-        name: Remove pre-release label from issues
-        runs-on: ubuntu-latest
-        steps:
-            -   name: Remove label
-                id: tags
-                uses: actions/github-script@v7
-                env:
-                    LABEL_NAME: pre-release
-                with:
-                    script: |
-                        const { data: issues } = await github.request('GET /repos/{owner}/{repo}/issues', {
-                            owner: context.repo.owner,
-                            repo: context.repo.repo,
-                            labels: process.env.LABEL_NAME,
-                            state: 'all'
-                        });
-                
-                        if (issues.length === 0) {
-                            core.notice(`No issues with label "${ process.env.LABEL_NAME }" found.`);
-                            return;
-                        }
+  # ---------------------------------------------------------------------------
+  # Determine Environment
+  # ---------------------------------------------------------------------------
+  setup:
+    name: 🔧 Setup
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.env.outputs.environment }}
+      should_deploy: ${{ steps.env.outputs.should_deploy }}
+    steps:
+      - name: Determine environment
+        id: env
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "environment=${{ inputs.environment }}" >> $GITHUB_OUTPUT
+            # Manual dispatch: deploy only if requested AND environment is dev
+            # Prod deploys must go through deploy.yml with confirmation
+            if [[ "${{ inputs.environment }}" == "prod" ]]; then
+              echo "should_deploy=false" >> $GITHUB_OUTPUT
+              echo "::warning::⚠️ PROD deploy disabled in release.yml. Use deploy.yml for production deployments."
+            else
+              echo "should_deploy=${{ inputs.deploy }}" >> $GITHUB_OUTPUT
+            fi
+          else
+            # Push to main: build and auto-deploy to dev
+            echo "environment=dev" >> $GITHUB_OUTPUT
+            echo "should_deploy=true" >> $GITHUB_OUTPUT
+          fi
 
-                        const issueIds = issues.map(({ node_id }) => node_id);
-                        const labelId = issues[0].labels.find(({ name }) => name === process.env.LABEL_NAME).node_id;
+  # ---------------------------------------------------------------------------
+  # Build Docker Image (centralized workflow)
+  # ---------------------------------------------------------------------------
+  build:
+    name: 🐳 Build
+    needs: [setup]
+    uses: raylsnetwork/rayls-public-github-workflows/.github/workflows/_build.yml@main
+    with:
+      image_name: rayls-explorer-frontend
+      environment: ${{ needs.setup.outputs.environment }}
+      push: true
+    secrets: inherit
 
-                        core.info(`Found ${ issueIds.length } issues with label "${ process.env.LABEL_NAME }"`);
+  # ---------------------------------------------------------------------------
+  # Security Scan (centralized workflow)
+  # ---------------------------------------------------------------------------
+  scan:
+    name: 🔒 Scan
+    needs: [setup, build]
+    uses: raylsnetwork/rayls-public-github-workflows/.github/workflows/_security-scan.yml@main
+    with:
+      image_ref: registry.digitalocean.com/rayls-public-chain-registry/rayls-explorer-frontend:${{ needs.build.outputs.image_tag }}
+    secrets: inherit
 
-                        for (const issueId of issueIds) {
-                            core.info(`Removing label for issue with node_id ${ issueId }...`);
+  # ---------------------------------------------------------------------------
+  # Security Gate (centralized workflow)
+  # Auto-passes if no CRITICAL vulns; pauses for admin approval otherwise.
+  # ---------------------------------------------------------------------------
+  gate:
+    name: 🛡️ Security Gate
+    needs: [scan]
+    uses: raylsnetwork/rayls-public-github-workflows/.github/workflows/_security-gate.yml@main
+    with:
+      has_critical: ${{ needs.scan.outputs.has_critical }}
+      override: ${{ inputs.skip_security_gate || false }}
 
-                            await github.graphql(`
-                                mutation($input: RemoveLabelsFromLabelableInput!) {
-                                    removeLabelsFromLabelable(input: $input) {
-                                        clientMutationId
-                                    }
-                                }
-                                `, {
-                                input: {
-                                    labelIds: [ labelId ],
-                                    labelableId: issueId
-                                },
-                            });
+  # ---------------------------------------------------------------------------
+  # Update Helm Chart (GitOps) (centralized workflow)
+  # ArgoCD monitors the Helm chart repository and automatically deploys changes.
+  # ---------------------------------------------------------------------------
+  update-helm:
+    name: 📦 Update Helm Chart
+    needs: [setup, build, scan, gate]
+    if: >-
+      always() &&
+      needs.build.result == 'success' &&
+      needs.gate.result == 'success' &&
+      needs.setup.outputs.should_deploy == 'true'
+    uses: raylsnetwork/rayls-public-github-workflows/.github/workflows/_update-helm.yml@main
+    with:
+      app_name: rayls-explorer-frontend
+      environment: ${{ needs.setup.outputs.environment }}
+      image_tag: ${{ needs.build.outputs.image_tag }}
+    secrets: inherit
 
-                            core.info('Done.\n');
-                        }
-        permissions:
-            issues: write
+  # ---------------------------------------------------------------------------
+  # Summary
+  # ---------------------------------------------------------------------------
+  summary:
+    name: 📋 Summary
+    runs-on: ubuntu-latest
+    needs: [setup, build, scan, gate, update-helm]
+    if: always()
+    steps:
+      - name: Pipeline Results
+        run: |
+          # Determine gate status
+          if [[ "${{ needs.gate.result }}" == "success" && "${{ needs.scan.outputs.has_critical }}" != "true" ]]; then
+            GATE_STATUS="✅ Passed (no critical vulns)"
+          elif [[ "${{ needs.gate.result }}" == "success" && "${{ needs.scan.outputs.has_critical }}" == "true" ]]; then
+            GATE_STATUS="⚠️ Override by ${{ github.actor }}"
+          elif [[ "${{ needs.gate.result }}" == "failure" ]]; then
+            GATE_STATUS="❌ Blocked — re-trigger with skip_security_gate: true to override"
+          else
+            GATE_STATUS="⏭️ Skipped"
+          fi
 
-    label_released_issues:
-        name: Label released issues
-        uses: './.github/workflows/label-issues-in-release.yml'
-        with:
-            tag: ${{ github.ref_name }}
-            label_name: ${{ github.ref_name }}
-            label_description: Release ${{ github.ref_name }}
-        secrets: inherit
-        permissions:
-            contents: read
-            issues: write
-
-    update_project_cards:
-        name: Update project tasks statuses
-        needs: label_released_issues
-        uses: './.github/workflows/update-project-cards.yml'
-        with:
-            project_name: ${{ vars.PROJECT_NAME }}
-            field_name: Status
-            field_value: Released
-            issues: ${{ needs.label_released_issues.outputs.issues }}
-        secrets: inherit
-        permissions:
-            issues: read
-
-    publish_image:
-        name: Publish Docker image
-        uses: './.github/workflows/publish-image.yml'
-        secrets: inherit
-        with:
-            platforms: linux/amd64,linux/arm64/v8
-            # NOTE: by default the image will be built with type=ref,event=tag; so we need to specify it here
-            tags: |
-                type=raw,value=latest
-        permissions:
-            contents: read
-            packages: write
-
-    publish_toolkit:
-        name: Publish toolkit package to NPM
-        uses: './.github/workflows/toolkit-npm-publisher.yml'
-        secrets: inherit
-        with:
-            version: ${{ github.ref_name }}
-        permissions:
-            contents: read
-            id-token: write
+          {
+            echo "## 📋 Release Pipeline"
+            echo ""
+            echo "| Stage | Status |"
+            echo "|-------|--------|"
+            echo "| Setup | ${{ needs.setup.result == 'success' && '✅' || '❌' }} |"
+            echo "| Build | ${{ needs.build.result == 'success' && '✅' || needs.build.result == 'skipped' && '⏭️' || '❌' }} |"
+            echo "| Scan | ${{ needs.scan.result == 'success' && '✅' || needs.scan.result == 'skipped' && '⏭️' || '❌' }} |"
+            echo "| Security Gate | $GATE_STATUS |"
+            echo "| Update Helm | ${{ needs.update-helm.result == 'success' && '✅' || needs.update-helm.result == 'skipped' && '⏭️' || needs.update-helm.result == 'cancelled' && '🚫' || '❌' }} |"
+            echo ""
+            echo "**Environment:** \`${{ needs.setup.outputs.environment }}\`"
+            echo "**Image Tag:** \`${{ needs.build.outputs.image_tag }}\`"
+            echo ""
+            if [[ "${{ needs.update-helm.result }}" == "success" ]]; then
+              echo "🔄 **ArgoCD** will automatically detect and deploy the changes."
+            fi
+          } >> $GITHUB_STEP_SUMMARY

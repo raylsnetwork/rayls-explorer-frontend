@@ -1,0 +1,98 @@
+# =============================================================================
+# CI - Pull Request Validation
+# =============================================================================
+# Validates code changes before merging.
+# Runs on pull requests to main branch.
+#
+# Pipeline:
+#   Secrets Scan (gitleaks) ─┐
+#   Validate (Node.js build)  ├─► Security Audit (npm) ─► Docker Build
+#                             │
+#   (all run in parallel)    ─┘
+#
+# Security Gates:
+#   - gitleaks: fails if secrets/credentials are found in PR commits
+#   - npm audit: fails if CRITICAL dependency vulnerabilities are found
+#
+# This workflow does NOT push images or deploy.
+# =============================================================================
+
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "pages/**"
+      - "ui/**"
+      - "lib/**"
+      - "toolkit/**"
+      - "configs/**"
+      - "nextjs/**"
+      - "public/**"
+      - "package.json"
+      - "package-lock.json"
+      - "yarn.lock"
+      - "Dockerfile"
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Secrets Scan — gitleaks on PR commits (centralized workflow)
+  # Gate: fails if any secret/credential pattern is found
+  # ---------------------------------------------------------------------------
+  secrets-scan:
+    name: 🔑 Secrets Scan
+    uses: raylsnetwork/rayls-public-github-workflows/.github/workflows/_security-secrets-scan.yml@main
+    with:
+      base_sha: ${{ github.event.pull_request.base.sha }}
+      head_sha: ${{ github.sha }}
+
+  # ---------------------------------------------------------------------------
+  # Validate Node.js Build (centralized workflow)
+  # ---------------------------------------------------------------------------
+  validate:
+    name: 🔍 Validate
+    uses: raylsnetwork/rayls-public-github-workflows/.github/workflows/_node-validate.yml@main
+    with:
+      output_dir: ".next"
+
+  # ---------------------------------------------------------------------------
+  # Security Audit — npm dependencies (centralized workflow)
+  # Gate: fails on CRITICAL vulnerabilities
+  # ---------------------------------------------------------------------------
+  security:
+    name: 🔒 Security Audit
+    uses: raylsnetwork/rayls-public-github-workflows/.github/workflows/_security-npm-audit.yml@main
+
+  # ---------------------------------------------------------------------------
+  # Test Docker Build (no push) (centralized workflow)
+  # ---------------------------------------------------------------------------
+  build:
+    name: 🐳 Docker Build Test
+    needs: [validate]
+    uses: raylsnetwork/rayls-public-github-workflows/.github/workflows/_build.yml@main
+    with:
+      image_name: rayls-explorer-frontend
+      environment: dev
+      push: false
+    secrets: inherit
+
+  # ---------------------------------------------------------------------------
+  # Summary
+  # ---------------------------------------------------------------------------
+  summary:
+    name: 📋 Summary
+    runs-on: ubuntu-latest
+    needs: [secrets-scan, validate, security, build]
+    if: always()
+    steps:
+      - name: Results
+        run: |
+          echo "## PR Validation" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Check | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Secrets Scan | ${{ needs.secrets-scan.result == 'success' && '✅' || needs.secrets-scan.result == 'failure' && '❌ Secrets detected' || '⏭️' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Node.js Build | ${{ needs.validate.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Security Audit | ${{ needs.security.result == 'success' && '✅' || needs.security.result == 'failure' && '❌ CRITICAL vulns found' || '⏭️' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Docker Build | ${{ needs.build.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY

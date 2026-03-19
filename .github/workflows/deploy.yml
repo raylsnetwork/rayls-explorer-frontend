@@ -1,0 +1,60 @@
+# =============================================================================
+# Deploy - Manual Deployment
+# =============================================================================
+# Manually deploy a specific image tag to any environment.
+# Use this for deploying specific versions or rolling back.
+#
+# ⚠️  IMPORTANT: This is the ONLY way to deploy to PRODUCTION.
+#
+# Production deployments require explicit admin approval via GitHub's
+# environment protection rules (prod-deploy environment). The approval is
+# permanently recorded in GitHub Deployments with the approver's username,
+# timestamp, and optional comment.
+#
+# Usage:
+#   - Deploy latest: Leave image_tag empty (uses {env}-latest)
+#   - Deploy specific: Enter tag like "dev-abc1234" or "prod-abc1234"
+#   - Rollback: Enter previous tag
+# =============================================================================
+
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        type: choice
+        options: [dev, prod]
+      image_tag:
+        description: "Image tag from DO Registry (empty = {env}-latest)"
+        required: false
+        type: string
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Validate and Resolve (centralized workflow)
+  # Resolves tag, pauses for admin approval if prod, verifies image in registry
+  # ---------------------------------------------------------------------------
+  validate:
+    name: ✅ Validate
+    uses: raylsnetwork/rayls-public-github-workflows/.github/workflows/_deploy-validate.yml@main
+    with:
+      environment: ${{ inputs.environment }}
+      app_name: rayls-explorer-frontend
+      image_tag: ${{ inputs.image_tag }}
+    secrets: inherit
+
+  # ---------------------------------------------------------------------------
+  # Update Helm Chart (GitOps) — ArgoCD picks up the change and deploys
+  # ---------------------------------------------------------------------------
+  update-helm:
+    name: 📦 Update Helm
+    needs: [validate]
+    uses: raylsnetwork/rayls-public-github-workflows/.github/workflows/_update-helm.yml@main
+    with:
+      app_name: rayls-explorer-frontend
+      environment: ${{ inputs.environment }}
+      image_tag: ${{ needs.validate.outputs.image_tag }}
+    secrets: inherit
