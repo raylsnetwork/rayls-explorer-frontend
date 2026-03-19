@@ -1,0 +1,258 @@
+# =============================================================================
+# Reusable Workflow: Security History Scan (TruffleHog)
+# =============================================================================
+# Scans the full git history of the CALLING repository for leaked secrets,
+# including content deleted in later commits (still present in git objects).
+#
+# Unlike gitleaks (which protects new commits), TruffleHog looks backwards
+# at everything that ever existed in the repository.
+#
+# On findings:
+#   - Full table embedded in the job Summary (values redacted)
+#   - A GitHub Issue is automatically created in the calling repo with a
+#     remediation checklist (rotate → audit → remove from history)
+#
+# Usage (typically in a scheduled + manual workflow):
+#
+#   on:
+#     workflow_dispatch:
+#       inputs:
+#         scan_mode:
+#           type: choice
+#           options: [verified-only, all]
+#           default: verified-only
+#         since_commit:
+#           required: false
+#           type: string
+#     schedule:
+#       - cron: "0 8 * * 1"
+#
+#   jobs:
+#     scan:
+#       uses: raylsnetwork/rayls-public-github-workflows/.github/workflows/_security-history-scan.yml@main
+#       with:
+#         scan_mode: ${{ inputs.scan_mode || 'verified-only' }}
+#         since_commit: ${{ inputs.since_commit || '' }}
+#       permissions:
+#         contents: read
+#         issues: write
+# =============================================================================
+
+name: Security History Scan
+
+on:
+  workflow_call:
+    inputs:
+      scan_mode:
+        description: "verified-only (confirmed active secrets) | all (all pattern matches)"
+        type: string
+        default: "verified-only"
+      since_commit:
+        description: "Scan commits after this SHA (empty = full history)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  trufflehog:
+    name: 🔍 TruffleHog History Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      # -----------------------------------------------------------------------
+      # Checkout with full history — required to scan all commits
+      # -----------------------------------------------------------------------
+      - name: Checkout (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # -----------------------------------------------------------------------
+      # Install TruffleHog
+      # -----------------------------------------------------------------------
+      - name: Install TruffleHog
+        run: |
+          curl -sSfL \
+            https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh \
+            | sh -s -- -b /usr/local/bin
+          trufflehog --version
+
+      # -----------------------------------------------------------------------
+      # Resolve scan arguments
+      # -----------------------------------------------------------------------
+      - name: Resolve scan arguments
+        id: args
+        run: |
+          ARGS="--json --no-update"
+
+          if [[ "${{ inputs.scan_mode }}" != "all" ]]; then
+            ARGS="$ARGS --only-verified"
+            echo "mode=verified-only" >> $GITHUB_OUTPUT
+          else
+            echo "mode=all" >> $GITHUB_OUTPUT
+          fi
+
+          if [[ -n "${{ inputs.since_commit }}" ]]; then
+            ARGS="$ARGS --since-commit ${{ inputs.since_commit }}"
+            echo "scope=since ${{ inputs.since_commit }}" >> $GITHUB_OUTPUT
+          else
+            echo "scope=full history" >> $GITHUB_OUTPUT
+          fi
+
+          echo "extra=$ARGS" >> $GITHUB_OUTPUT
+
+      # -----------------------------------------------------------------------
+      # Run TruffleHog
+      # Output is NDJSON (one JSON object per line, one finding per line)
+      # -----------------------------------------------------------------------
+      - name: Run TruffleHog
+        id: scan
+        run: |
+          set +e
+          trufflehog git file://. \
+            ${{ steps.args.outputs.extra }} \
+            2>/dev/null \
+            | tee findings.ndjson
+          set -e
+
+          COUNT=$(grep -c . findings.ndjson 2>/dev/null || echo "0")
+          echo "findings_count=$COUNT" >> $GITHUB_OUTPUT
+          echo ""
+          echo "──────────────────────────────────"
+          echo "Findings: $COUNT"
+          echo "──────────────────────────────────"
+
+      # -----------------------------------------------------------------------
+      # Summary — always visible, values redacted by TruffleHog
+      # -----------------------------------------------------------------------
+      - name: Summary
+        if: always()
+        run: |
+          FINDINGS="${{ steps.scan.outputs.findings_count }}"
+          MODE="${{ steps.args.outputs.mode }}"
+          SCOPE="${{ steps.args.outputs.scope }}"
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+          {
+            if [[ "$FINDINGS" -gt 0 ]]; then
+              echo "## ❌ $FINDINGS Secret(s) Found in Git History"
+              echo ""
+              echo "> **Immediate action required.**"
+              echo "> Rotate every credential listed below and check for unauthorized use."
+              echo "> Secrets in git history are permanently exposed — even if deleted in a later commit."
+            else
+              echo "## ✅ No Secrets Found"
+            fi
+
+            echo ""
+            echo "| Property | Value |"
+            echo "|----------|-------|"
+            echo "| Repository | \`${{ github.repository }}\` |"
+            echo "| Scope | $SCOPE |"
+            echo "| Mode | $MODE |"
+            echo "| Findings | **$FINDINGS** |"
+            echo "| Run | [View]($RUN_URL) |"
+
+            if [[ "$FINDINGS" -gt 0 ]]; then
+              echo ""
+              echo "### Findings"
+              echo ""
+              echo "| # | Detector | File | Commit | Author | Date | Verified |"
+              echo "|---|----------|------|--------|--------|------|----------|"
+              jq -rs '
+                to_entries[] |
+                "| \(.key + 1) | `\(.value.DetectorName)` | `\(.value.SourceMetadata.Data.Git.file // "—")` | `\(.value.SourceMetadata.Data.Git.commit[:7])` | \(.value.SourceMetadata.Data.Git.email // "—") | \(.value.SourceMetadata.Data.Git.timestamp[:10] // "—") | \(if .value.Verified then "✅ Yes" else "❓ No" end) |"
+              ' findings.ndjson 2>/dev/null \
+              || echo "| — | Could not parse findings — check the raw workflow log | — | — | — | — | — |"
+
+              echo ""
+              echo "> ⚠️ Secret values are **redacted** in this output."
+            fi
+          } >> $GITHUB_STEP_SUMMARY
+
+      # -----------------------------------------------------------------------
+      # Ensure the "security" label exists before creating the issue
+      # -----------------------------------------------------------------------
+      - name: Ensure security label exists
+        if: steps.scan.outputs.findings_count != '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh label create "security" \
+            --color "d93f0b" \
+            --description "Security vulnerability" \
+            --force 2>/dev/null || true
+
+      # -----------------------------------------------------------------------
+      # Create a GitHub Issue with a remediation checklist
+      # Only runs when findings exist
+      # -----------------------------------------------------------------------
+      - name: Create issue
+        if: steps.scan.outputs.findings_count != '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          FINDINGS="${{ steps.scan.outputs.findings_count }}"
+          SCOPE="${{ steps.args.outputs.scope }}"
+          MODE="${{ steps.args.outputs.mode }}"
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          DATE=$(date -u +"%Y-%m-%d %H:%M UTC")
+
+          FINDINGS_TABLE=$(
+            jq -rs '
+              to_entries[] |
+              "| \(.key + 1) | `\(.value.DetectorName)` | `\(.value.SourceMetadata.Data.Git.file // "—")` | `\(.value.SourceMetadata.Data.Git.commit[:7])` | \(.value.SourceMetadata.Data.Git.email // "—") | \(.value.SourceMetadata.Data.Git.timestamp[:10] // "—") | \(if .value.Verified then "✅" else "❓" end) |"
+            ' findings.ndjson 2>/dev/null \
+            || echo "| — | See workflow run for details | — | — | — | — | — |"
+          )
+
+          cat > issue-body.md << 'BODYEOF'
+          ## 🚨 Secrets Detected in Git History
+
+          TruffleHog found **FINDINGS_COUNT** secret(s) in the repository history.
+
+          > **Secrets present in git history are permanently exposed**, even if removed in a later
+          > commit. Anyone with access to the repository (or its forks/clones) can recover them
+          > with `git checkout <commit>`.
+
+          ### Findings
+
+          | # | Detector | File | Commit | Author | Date | Verified |
+          |---|----------|------|--------|--------|------|----------|
+          FINDINGS_TABLE_PLACEHOLDER
+
+          > ⚠️ Secret values are redacted. See the [workflow run](RUN_URL_PLACEHOLDER) for full details.
+
+          ---
+
+          ### Remediation Checklist
+
+          - [ ] **Rotate** every credential listed above with the respective provider — do this first
+          - [ ] **Audit** access logs for each rotated credential to check for unauthorized use
+          - [ ] **Remove from history** using [`git filter-repo`](https://github.com/newren/git-filter-repo) or [BFG Repo Cleaner](https://rtyley.github.io/bfg-repo-cleaner/), then force-push
+          - [ ] If the repository is or was ever **public**, assume full compromise — rotate unconditionally
+          - [ ] **Notify** affected teams and update any infrastructure that uses the exposed credential
+
+          ### References
+
+          - [Removing sensitive data from a repository — GitHub Docs](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/removing-sensitive-data-from-a-repository)
+          - [git-filter-repo documentation](https://htmlpreview.github.io/?https://github.com/newren/git-filter-repo/blob/docs/html/git-filter-repo.html)
+
+          ---
+          _Detected by TruffleHog · Scope: SCOPE_PLACEHOLDER · Mode: MODE_PLACEHOLDER · DATE_PLACEHOLDER_
+          BODYEOF
+
+          sed -i "s|FINDINGS_COUNT|$FINDINGS|g" issue-body.md
+          sed -i "s|FINDINGS_TABLE_PLACEHOLDER|$FINDINGS_TABLE|g" issue-body.md
+          sed -i "s|RUN_URL_PLACEHOLDER|$RUN_URL|g" issue-body.md
+          sed -i "s|SCOPE_PLACEHOLDER|$SCOPE|g" issue-body.md
+          sed -i "s|MODE_PLACEHOLDER|$MODE|g" issue-body.md
+          sed -i "s|DATE_PLACEHOLDER|$DATE|g" issue-body.md
+
+          gh issue create \
+            --title "🚨 $FINDINGS secret(s) detected by TruffleHog ($DATE)" \
+            --label "security" \
+            --body-file issue-body.md

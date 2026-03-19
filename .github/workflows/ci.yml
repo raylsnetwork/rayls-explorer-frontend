@@ -42,7 +42,7 @@ jobs:
   # ---------------------------------------------------------------------------
   secrets-scan:
     name: 🔑 Secrets Scan
-    uses: raylsnetwork/rayls-public-github-workflows/.github/workflows/_security-secrets-scan.yml@main
+    uses: ./.github/workflows/_security-secrets-scan.yml
     with:
       base_sha: ${{ github.event.pull_request.base.sha }}
       head_sha: ${{ github.sha }}
@@ -52,7 +52,7 @@ jobs:
   # ---------------------------------------------------------------------------
   validate:
     name: 🔍 Validate
-    uses: raylsnetwork/rayls-public-github-workflows/.github/workflows/_node-validate.yml@main
+    uses: ./.github/workflows/_node-validate.yml
     with:
       output_dir: ".next"
 
@@ -62,7 +62,7 @@ jobs:
   # ---------------------------------------------------------------------------
   security:
     name: 🔒 Security Audit
-    uses: raylsnetwork/rayls-public-github-workflows/.github/workflows/_security-npm-audit.yml@main
+    uses: ./.github/workflows/_security-npm-audit.yml
 
   # ---------------------------------------------------------------------------
   # Test Docker Build (no push) (centralized workflow)
@@ -70,7 +70,7 @@ jobs:
   build:
     name: 🐳 Docker Build Test
     needs: [validate]
-    uses: raylsnetwork/rayls-public-github-workflows/.github/workflows/_build.yml@main
+    uses: ./.github/workflows/_build.yml
     with:
       image_name: rayls-explorer-frontend
       environment: dev

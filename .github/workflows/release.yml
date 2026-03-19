@@ -101,7 +101,7 @@ jobs:
   build:
     name: 🐳 Build
     needs: [setup]
-    uses: raylsnetwork/rayls-public-github-workflows/.github/workflows/_build.yml@main
+    uses: ./.github/workflows/_build.yml
     with:
       image_name: rayls-explorer-frontend
       environment: ${{ needs.setup.outputs.environment }}
@@ -114,7 +114,7 @@ jobs:
   scan:
     name: 🔒 Scan
     needs: [setup, build]
-    uses: raylsnetwork/rayls-public-github-workflows/.github/workflows/_security-scan.yml@main
+    uses: ./.github/workflows/_security-scan.yml
     with:
       image_ref: registry.digitalocean.com/rayls-public-chain-registry/rayls-explorer-frontend:${{ needs.build.outputs.image_tag }}
     secrets: inherit
@@ -126,7 +126,7 @@ jobs:
   gate:
     name: 🛡️ Security Gate
     needs: [scan]
-    uses: raylsnetwork/rayls-public-github-workflows/.github/workflows/_security-gate.yml@main
+    uses: ./.github/workflows/_security-gate.yml
     with:
       has_critical: ${{ needs.scan.outputs.has_critical }}
       override: ${{ inputs.skip_security_gate || false }}
@@ -143,7 +143,7 @@ jobs:
       needs.build.result == 'success' &&
       needs.gate.result == 'success' &&
       needs.setup.outputs.should_deploy == 'true'
-    uses: raylsnetwork/rayls-public-github-workflows/.github/workflows/_update-helm.yml@main
+    uses: ./.github/workflows/_update-helm.yml
     with:
       app_name: rayls-explorer-frontend
       environment: ${{ needs.setup.outputs.environment }}

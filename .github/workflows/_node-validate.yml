@@ -1,0 +1,78 @@
+# =============================================================================
+# Reusable Workflow: Node.js Build Validation
+# =============================================================================
+# Validates a Node.js project builds successfully.
+# Package manager is auto-detected from the lock file:
+#   - yarn.lock present         → yarn --frozen-lockfile / yarn build
+#   - package-lock.json present → npm ci / npm run build (default)
+#
+# Usage:
+#   jobs:
+#     validate:
+#       uses: raylsnetwork/rayls-public-github-workflows/.github/workflows/_node-validate.yml@main
+#       with:
+#         node_version: "22"      # optional, defaults to "22"
+#         output_dir: ".next"     # optional, defaults to "dist"
+# =============================================================================
+
+name: Node.js Validate
+
+on:
+  workflow_call:
+    inputs:
+      node_version:
+        description: "Node.js version to use"
+        required: false
+        type: string
+        default: "22"
+      output_dir:
+        description: "Build output directory to verify (e.g. dist, .next)"
+        required: false
+        type: string
+        default: "dist"
+
+jobs:
+  validate:
+    name: 🔍 Validate (Node.js)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect package manager
+        id: pm
+        run: |
+          if [[ -f "yarn.lock" ]]; then
+            echo "manager=yarn" >> $GITHUB_OUTPUT
+            echo "cache=yarn" >> $GITHUB_OUTPUT
+          else
+            echo "manager=npm" >> $GITHUB_OUTPUT
+            echo "cache=npm" >> $GITHUB_OUTPUT
+          fi
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node_version }}
+          cache: ${{ steps.pm.outputs.cache }}
+
+      - name: Install dependencies
+        run: |
+          if [[ "${{ steps.pm.outputs.manager }}" == "yarn" ]]; then
+            yarn --frozen-lockfile
+          else
+            npm ci
+          fi
+
+      - name: Build
+        run: |
+          if [[ "${{ steps.pm.outputs.manager }}" == "yarn" ]]; then
+            yarn build
+          else
+            npm run build
+          fi
+        env:
+          VITE_BASE_API_URL: "http://localhost:3001/v1"
+          VITE_REVENUE_JSON_URL: "https://example.com/revenue.json"
+
+      - name: Verify
+        run: test -d "${{ inputs.output_dir }}" && echo "✅ Build successful"

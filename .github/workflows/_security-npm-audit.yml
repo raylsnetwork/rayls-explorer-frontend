@@ -1,0 +1,86 @@
+# =============================================================================
+# Reusable Workflow: npm Security Audit
+# =============================================================================
+# Audits npm dependencies for known vulnerabilities.
+# Security gate: fails if CRITICAL vulnerabilities are found.
+#
+# Results with severity counts are embedded in the job Summary.
+#
+# Usage:
+#   jobs:
+#     security:
+#       uses: raylsnetwork/rayls-public-github-workflows/.github/workflows/_security-npm-audit.yml@main
+#       with:
+#         node_version: "22"   # optional, defaults to "22"
+# =============================================================================
+
+name: npm Security Audit
+
+on:
+  workflow_call:
+    inputs:
+      node_version:
+        description: "Node.js version to use"
+        required: false
+        type: string
+        default: "22"
+
+jobs:
+  audit:
+    name: 🔒 Security Audit (npm)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node_version }}
+          cache: "npm"
+
+      - run: npm ci
+
+      - name: npm audit (JSON report)
+        id: audit
+        run: npm audit --json > npm-audit.json 2>&1 || true
+
+      - name: Security gate — block on CRITICAL
+        run: npm audit --audit-level=critical
+
+      - name: Summary
+        if: always()
+        run: |
+          if [[ -f npm-audit.json ]]; then
+            CRITICAL=$(jq '.metadata.vulnerabilities.critical // 0' npm-audit.json)
+            HIGH=$(jq '.metadata.vulnerabilities.high // 0' npm-audit.json)
+            MODERATE=$(jq '.metadata.vulnerabilities.moderate // 0' npm-audit.json)
+            LOW=$(jq '.metadata.vulnerabilities.low // 0' npm-audit.json)
+            TOTAL=$(jq '.metadata.vulnerabilities.total // 0' npm-audit.json)
+          else
+            CRITICAL=0; HIGH=0; MODERATE=0; LOW=0; TOTAL=0
+          fi
+
+          {
+            if [[ "$CRITICAL" -gt 0 ]]; then
+              echo "## ❌ Dependency Security Gate FAILED"
+              echo ""
+              echo "> **PR is blocked.** Fix all CRITICAL npm vulnerabilities before merging."
+              echo "> Run \`npm audit fix\` or update the affected packages."
+            else
+              echo "## ✅ Dependency Security Gate Passed"
+            fi
+            echo ""
+            echo "### npm audit Results"
+            echo ""
+            echo "| Severity | Count |"
+            echo "|----------|-------|"
+            echo "| 🔴 CRITICAL | **$CRITICAL** |"
+            echo "| 🟠 HIGH | $HIGH |"
+            echo "| 🟡 MODERATE | $MODERATE |"
+            echo "| 🔵 LOW | $LOW |"
+            echo "| **Total** | **$TOTAL** |"
+            if [[ "$TOTAL" -gt 0 ]]; then
+              echo ""
+              echo "> Run \`npm audit\` locally for full details, or check **Security → Dependabot alerts** in this repo."
+            fi
+          } >> $GITHUB_STEP_SUMMARY
