@@ -189,6 +189,7 @@ jobs:
       app_name: rayls-explorer-frontend
       environment: ${{ needs.setup.outputs.environment }}
       image_tag: ${{ needs.build.outputs.image_tag }}
+      helm_repo_path: blockscout-testnet
     secrets: inherit
 
   # ---------------------------------------------------------------------------
