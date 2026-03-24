@@ -114,7 +114,7 @@ jobs:
   scan:
     name: 🔒 Scan
     needs: [setup, build]
-    uses: ./.github/workflows/_security-scan.yml
+    uses: raylsnetwork/rayls-public-github-workflows/.github/workflows/_security-scan.yml@main
     with:
       image_ref: registry.digitalocean.com/rayls-public-chain-registry/rayls-explorer-frontend:${{ needs.build.outputs.image_tag }}
     secrets: inherit
