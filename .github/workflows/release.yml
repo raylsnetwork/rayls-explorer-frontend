@@ -109,12 +109,12 @@ jobs:
     secrets: inherit
 
   # ---------------------------------------------------------------------------
-  # Security Scan (centralized workflow)
+  # Security Scan (local reusable workflow)
   # ---------------------------------------------------------------------------
   scan:
     name: 🔒 Scan
     needs: [setup, build]
-    uses: raylsnetwork/rayls-public-github-workflows/.github/workflows/_security-scan.yml@main
+    uses: ./.github/workflows/_security-scan.yml
     with:
       image_ref: registry.digitalocean.com/rayls-public-chain-registry/rayls-explorer-frontend:${{ needs.build.outputs.image_tag }}
     secrets: inherit

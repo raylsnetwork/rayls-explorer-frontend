@@ -17,7 +17,7 @@
 # Usage:
 #   jobs:
 #     validate:
-#       uses: raylsnetwork/rayls-public-github-workflows/.github/workflows/_deploy-validate.yml@main
+#       uses: ./.github/workflows/_deploy-validate.yml
 #       with:
 #         environment: prod
 #         app_name: my-app

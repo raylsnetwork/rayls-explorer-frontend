@@ -9,7 +9,7 @@
 # Usage:
 #   jobs:
 #     security:
-#       uses: raylsnetwork/rayls-public-github-workflows/.github/workflows/_security-npm-audit.yml@main
+#       uses: ./.github/workflows/_security-npm-audit.yml
 #       with:
 #         node_version: "22"   # optional, defaults to "22"
 # =============================================================================
