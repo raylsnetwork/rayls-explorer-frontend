@@ -2,19 +2,22 @@
 # Deploy - Manual Deployment
 # =============================================================================
 # Manually deploy a specific image tag to any environment.
-# Use this for deploying specific versions or rolling back.
+# Use this for deploying to production, rolling back, or forcing a re-deploy.
 #
 # ⚠️  IMPORTANT: This is the ONLY way to deploy to PRODUCTION.
-#
-# Production deployments require explicit admin approval via GitHub's
-# environment protection rules (prod-deploy environment). The approval is
-# permanently recorded in GitHub Deployments with the approver's username,
-# timestamp, and optional comment.
+#     Production deployments require explicit confirmation by typing
+#     "DEPLOY-TO-PROD" into the prod_confirmation input.
 #
 # Usage:
-#   - Deploy latest: Leave image_tag empty (uses {env}-latest)
-#   - Deploy specific: Enter tag like "dev-abc1234" or "prod-abc1234"
-#   - Rollback: Enter previous tag
+#   - Dev deploy: Select environment "dev", provide image tag (e.g. dev-abc1234)
+#   - Prod deploy: Select "prod", provide image tag, type "DEPLOY-TO-PROD"
+#                  in the prod_confirmation field
+#   - Rollback: Enter a previous image tag
+#
+# Requirements:
+#   - image_tag MUST be specified explicitly (no defaults — never use "latest")
+#   - Image MUST exist in DigitalOcean Registry before deploying
+#   - PROD deployments require typing "DEPLOY-TO-PROD" for confirmation
 # =============================================================================
 
 name: Deploy
@@ -28,26 +31,108 @@ on:
         type: choice
         options: [dev, prod]
       image_tag:
-        description: "Image tag from DO Registry (empty = {env}-latest)"
+        description: "Image tag to deploy (e.g. dev-abc1234 or prod-abc1234)"
+        required: true
+        type: string
+      prod_confirmation:
+        description: 'FOR PROD ONLY: Type "DEPLOY-TO-PROD" to confirm production deployment'
         required: false
         type: string
 
 jobs:
   # ---------------------------------------------------------------------------
-  # Validate and Resolve (centralized workflow)
-  # Resolves tag, pauses for admin approval if prod, verifies image in registry
+  # Validate
   # ---------------------------------------------------------------------------
   validate:
     name: ✅ Validate
-    uses: ./.github/workflows/_deploy-validate.yml
-    with:
-      environment: ${{ inputs.environment }}
-      app_name: rayls-explorer-frontend
+    runs-on: ubuntu-latest
+    outputs:
       image_tag: ${{ inputs.image_tag }}
-    secrets: inherit
+    steps:
+      - name: Require explicit image tag
+        env:
+          IMAGE_TAG: ${{ inputs.image_tag }}
+        run: |
+          if [[ -z "$IMAGE_TAG" ]]; then
+            echo "image_tag is required. Provide an explicit tag (e.g. dev-abc1234)."
+            exit 1
+          fi
+
+      - name: Production confirmation check
+        if: inputs.environment == 'prod'
+        env:
+          PROD_CONFIRMATION: ${{ inputs.prod_confirmation }}
+        run: |
+          echo "╔════════════════════════════════════════════════════════════════╗"
+          echo "║           !!!  PRODUCTION DEPLOYMENT REQUESTED  !!!            ║"
+          echo "╠════════════════════════════════════════════════════════════════╣"
+          echo "║  Environment: PRODUCTION                                       ║"
+          echo "║  This will affect LIVE USERS of the explorer.                  ║"
+          echo "╚════════════════════════════════════════════════════════════════╝"
+          echo ""
+
+          if [[ "$PROD_CONFIRMATION" != "DEPLOY-TO-PROD" ]]; then
+            echo "DEPLOYMENT ABORTED"
+            echo ""
+            echo "To deploy to production, you must type exactly:"
+            echo "  DEPLOY-TO-PROD"
+            echo ""
+            echo "in the 'prod_confirmation' field."
+            exit 1
+          fi
+
+          echo "Production deployment confirmed"
+
+      - name: Setup doctl
+        uses: digitalocean/action-doctl@v2
+        with:
+          token: ${{ secrets.DO_ACCESS_TOKEN }}
+
+      - name: Verify image exists in DO Registry
+        env:
+          IMAGE_TAG: ${{ inputs.image_tag }}
+        run: |
+          echo "Checking DigitalOcean Registry for image tag: $IMAGE_TAG"
+          echo ""
+
+          TAGS=$(doctl registry repository list-tags rayls-explorer-frontend --output json 2>/dev/null | jq -r '.[].tag' || echo "")
+
+          if [[ -z "$TAGS" ]]; then
+            echo "Could not fetch tags from registry or repository is empty"
+            exit 1
+          fi
+
+          if ! echo "$TAGS" | grep -qx "$IMAGE_TAG"; then
+            echo "Image tag '$IMAGE_TAG' NOT FOUND in DigitalOcean Registry"
+            echo ""
+            echo "Available tags in registry:"
+            echo "$TAGS" | head -20
+            echo ""
+            echo "Tip: Run the release.yml workflow first to build and push the image."
+            exit 1
+          fi
+
+          echo "Image tag '$IMAGE_TAG' found in DigitalOcean Registry"
+
+      - name: Summary
+        env:
+          IMAGE_TAG: ${{ inputs.image_tag }}
+          ENVIRONMENT: ${{ inputs.environment }}
+        run: |
+          echo "## Validation Passed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Environment | \`$ENVIRONMENT\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Image Tag   | \`$IMAGE_TAG\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Registry    | DigitalOcean ✅ |" >> $GITHUB_STEP_SUMMARY
+          if [[ "$ENVIRONMENT" == "prod" ]]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**PRODUCTION DEPLOYMENT CONFIRMED**" >> $GITHUB_STEP_SUMMARY
+          fi
 
   # ---------------------------------------------------------------------------
-  # Update Helm Chart (GitOps) — ArgoCD picks up the change and deploys
+  # Update Helm Chart (GitOps) → ArgoCD auto-deploys
   # ---------------------------------------------------------------------------
   update-helm:
     name: 📦 Update Helm
