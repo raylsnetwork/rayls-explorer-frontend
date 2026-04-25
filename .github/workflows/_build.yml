@@ -11,7 +11,7 @@
 # Usage:
 #   jobs:
 #     build:
-#       uses: raylsnetwork/rayls-public-github-workflows/.github/workflows/_build.yml@main
+#       uses: ./.github/workflows/_build.yml
 #       with:
 #         image_name: my-app
 #         environment: dev

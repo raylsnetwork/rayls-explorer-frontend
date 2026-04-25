@@ -1,0 +1,171 @@
+# =============================================================================
+# Reusable Workflow: Trivy Image Security Scan
+# =============================================================================
+# Scans a Docker image for vulnerabilities using Trivy.
+#
+# Security gate: the caller is responsible for acting on the `has_critical`
+# output — typically pausing for admin approval rather than hard-failing,
+# to allow an explicit override with audit trail.
+#
+# Results are also uploaded to the GitHub Security tab (SARIF format).
+#
+# Usage:
+#   jobs:
+#     scan:
+#       uses: ./.github/workflows/_security-scan.yml
+#       with:
+#         image_ref: registry.digitalocean.com/my-registry/my-image:tag
+#       secrets: inherit
+#
+# Outputs:
+#   has_critical: 'true' | 'false'
+# =============================================================================
+
+name: Trivy Image Scan
+
+on:
+  workflow_call:
+    inputs:
+      image_ref:
+        description: "Full image reference to scan (e.g. registry/image:tag)"
+        required: true
+        type: string
+    outputs:
+      has_critical:
+        description: "'true' if CRITICAL vulnerabilities were found in the image"
+        value: ${{ jobs.scan.outputs.has_critical }}
+    secrets:
+      DO_REGISTRY_USERNAME:
+        required: true
+      DO_REGISTRY_TOKEN:
+        required: true
+
+jobs:
+  scan:
+    name: 🔒 Trivy Image Scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    outputs:
+      has_critical: ${{ steps.counts.outputs.has_critical }}
+
+    steps:
+      - name: Checkout (required for SARIF upload)
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Login to Registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: registry.digitalocean.com
+          username: ${{ secrets.DO_REGISTRY_USERNAME }}
+          password: ${{ secrets.DO_REGISTRY_TOKEN }}
+
+      # -----------------------------------------------------------------------
+      # 1. SARIF scan → GitHub Security tab
+      # -----------------------------------------------------------------------
+      - name: Trivy — SARIF (Security tab)
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
+        with:
+          image-ref: ${{ inputs.image_ref }}
+          format: "sarif"
+          output: "trivy-results.sarif"
+          severity: "CRITICAL,HIGH"
+          exit-code: "0"
+
+      - name: Upload SARIF to GitHub Security
+        uses: github/codeql-action/upload-sarif@ebcb5b36ded6beda4ceefea6a8bc4cc885255bb3 # v3.34.1
+        continue-on-error: true
+        with:
+          sarif_file: "trivy-results.sarif"
+
+      # -----------------------------------------------------------------------
+      # 2. Full JSON scan → single source of truth for counts and display
+      # -----------------------------------------------------------------------
+      - name: Trivy — Full report (JSON)
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
+        with:
+          image-ref: ${{ inputs.image_ref }}
+          format: "json"
+          output: "trivy-report.json"
+          severity: "CRITICAL,HIGH,MEDIUM"
+          exit-code: "0"
+
+      # -----------------------------------------------------------------------
+      # 3. Count vulnerabilities and set output for the caller
+      # -----------------------------------------------------------------------
+      - name: Count vulnerabilities
+        id: counts
+        if: always()
+        run: |
+          # Count from JSON: Severity field uses effective severity (vendor preferred,
+          # NVD fallback), identical to what Trivy writes into the SARIF level field.
+          # This avoids SARIF-vs-table discrepancies for CVEs without vendor severity.
+          CRITICAL_COUNT=$(jq '[.Results[].Vulnerabilities // [] | .[] | select(.Severity=="CRITICAL")] | length' \
+            trivy-report.json 2>/dev/null || echo 0)
+          HIGH_COUNT=$(jq '[.Results[].Vulnerabilities // [] | .[] | select(.Severity=="HIGH")] | length' \
+            trivy-report.json 2>/dev/null || echo 0)
+          MEDIUM_COUNT=$(jq '[.Results[].Vulnerabilities // [] | .[] | select(.Severity=="MEDIUM")] | length' \
+            trivy-report.json 2>/dev/null || echo 0)
+          echo "critical=$CRITICAL_COUNT" >> $GITHUB_OUTPUT
+          echo "high=$HIGH_COUNT" >> $GITHUB_OUTPUT
+          echo "medium=$MEDIUM_COUNT" >> $GITHUB_OUTPUT
+          if [[ "$CRITICAL_COUNT" -gt 0 ]]; then
+            echo "has_critical=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_critical=false" >> $GITHUB_OUTPUT
+          fi
+
+      # -----------------------------------------------------------------------
+      # 4. Summary — always runs, values are never exposed
+      # -----------------------------------------------------------------------
+      - name: Summary
+        if: always()
+        run: |
+          CRITICAL_COUNT="${{ steps.counts.outputs.critical }}"
+          HIGH_COUNT="${{ steps.counts.outputs.high }}"
+          MEDIUM_COUNT="${{ steps.counts.outputs.medium }}"
+          TOTAL=$((CRITICAL_COUNT + HIGH_COUNT + MEDIUM_COUNT))
+
+          {
+            if [[ "$CRITICAL_COUNT" -gt 0 ]]; then
+              echo "## ⚠️ Critical Vulnerabilities Found"
+              echo ""
+              echo "> The deploy pipeline is **paused** and requires explicit admin approval to proceed."
+              echo "> Re-trigger the release workflow with skip_security_gate: true to override."
+            else
+              echo "## ✅ Security Scan Passed"
+            fi
+            echo ""
+            echo "| Property | Value |"
+            echo "|----------|-------|"
+            echo "| Image | \`${{ inputs.image_ref }}\` |"
+            echo "| Scanner | Trivy |"
+            echo "| Critical found | $([[ "$CRITICAL_COUNT" -gt 0 ]] && echo '⚠️ Yes' || echo '✅ No') |"
+            echo ""
+            echo "### Vulnerability Counts"
+            echo ""
+            echo "| Severity | Count |"
+            echo "|----------|-------|"
+            echo "| 🔴 CRITICAL | **$CRITICAL_COUNT** |"
+            echo "| 🟠 HIGH | $HIGH_COUNT |"
+            echo "| 🟡 MEDIUM | $MEDIUM_COUNT |"
+            echo "| **Total** | **$TOTAL** |"
+            echo ""
+            if [[ -s trivy-report.json ]]; then
+              echo "### Full Vulnerability Report"
+              echo ""
+              echo "| Library | Vulnerability | Severity | Status | Installed | Fixed |"
+              echo "|---------|--------------|----------|--------|-----------|-------|"
+              jq -r '
+                .Results[] |
+                select((.Vulnerabilities // []) | length > 0) |
+                .Vulnerabilities[] |
+                "| `\(.PkgName)` | \(.VulnerabilityID) | \(.Severity // "—") | \(.Status // "") | \(.InstalledVersion) | \(.FixedVersion // "—") |"
+              ' trivy-report.json 2>/dev/null || true
+            else
+              echo "_No vulnerabilities found at CRITICAL / HIGH / MEDIUM severity._"
+            fi
+            echo ""
+            echo "📋 Full details also available in the **Security** tab → Code scanning alerts."
+          } >> $GITHUB_STEP_SUMMARY
