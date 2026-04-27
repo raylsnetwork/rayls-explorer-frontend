@@ -19,7 +19,9 @@
 #       secrets: inherit
 #
 # Outputs:
-#   image_tag:    Primary image tag (e.g. dev-abc1234)
+#   image_tag:    Primary image tag (short git SHA, e.g. abc1234) — same tag
+#                 is used across environments so testnet and mainnet can pin
+#                 the exact same image.
 #   image_digest: Image digest for verification
 #
 # Required org-level secrets (passed via secrets: inherit):
@@ -95,7 +97,7 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ inputs.image_name }}
           tags: |
-            type=sha,prefix=${{ inputs.environment }}-,format=short
+            type=sha,format=short
 
       - name: Build and push
         id: build
