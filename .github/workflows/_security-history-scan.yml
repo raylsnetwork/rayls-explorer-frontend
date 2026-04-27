@@ -59,7 +59,7 @@ permissions:
 jobs:
   trufflehog:
     name: 🔍 TruffleHog History Scan
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest-m
 
     steps:
       # -----------------------------------------------------------------------

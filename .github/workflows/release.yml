@@ -71,7 +71,7 @@ jobs:
   # ---------------------------------------------------------------------------
   setup:
     name: 🔧 Setup
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest-m
     outputs:
       environment: ${{ steps.env.outputs.environment }}
       should_deploy: ${{ steps.env.outputs.should_deploy }}
@@ -127,7 +127,7 @@ jobs:
   # ---------------------------------------------------------------------------
   gate:
     name: 🛡️ Security Gate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest-m
     needs: [scan]
     continue-on-error: ${{ inputs.skip_security_gate || false }}
     steps:
@@ -198,7 +198,7 @@ jobs:
   # ---------------------------------------------------------------------------
   summary:
     name: 📋 Summary
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest-m
     needs: [setup, build, scan, gate, update-helm]
     if: always()
     steps:
