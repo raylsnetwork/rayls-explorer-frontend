@@ -49,7 +49,6 @@ import GasPriceValue from 'ui/shared/value/GasPriceValue';
 import NativeCoinValue from 'ui/shared/value/NativeCoinValue';
 import VerificationSteps from 'ui/shared/verificationSteps/VerificationSteps';
 import TxDetailsActions from 'ui/tx/details/txDetailsActions/TxDetailsActions';
-import TxDetailsBurntFees from 'ui/tx/details/TxDetailsBurntFees';
 import TxDetailsFeePerGas from 'ui/tx/details/TxDetailsFeePerGas';
 import TxDetailsGasPrice from 'ui/tx/details/TxDetailsGasPrice';
 import TxDetailsOther from 'ui/tx/details/TxDetailsOther';
@@ -748,8 +747,6 @@ const TxDetails = ({ data, isLoading, socketStatus, noTxActions }: Props) => {
           </DetailedInfo.ItemValue>
         </>
       ) }
-
-      <TxDetailsBurntFees data={ data } isLoading={ isLoading }/>
 
       { rollupFeature.isEnabled && rollupFeature.type === 'optimistic' && (
         <>

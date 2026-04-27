@@ -1,7 +1,7 @@
 # =============================================================================
-# Reusable Workflow: npm Security Audit
+# Reusable Workflow: yarn Security Audit
 # =============================================================================
-# Audits npm dependencies for known vulnerabilities.
+# Audits yarn dependencies for known vulnerabilities.
 # Security gate: fails if CRITICAL vulnerabilities are found.
 #
 # Results with severity counts are embedded in the job Summary.
@@ -14,7 +14,7 @@
 #         node_version: "22"   # optional, defaults to "22"
 # =============================================================================
 
-name: npm Security Audit
+name: yarn Security Audit
 
 on:
   workflow_call:
@@ -27,7 +27,7 @@ on:
 
 jobs:
   audit:
-    name: 🔒 Security Audit (npm)
+    name: 🔒 Security Audit (yarn)
     runs-on: ubuntu-latest
 
     steps:
@@ -36,51 +36,75 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ inputs.node_version }}
-          cache: "npm"
+          cache: "yarn"
 
-      - run: npm ci
+      - run: yarn install --frozen-lockfile --ignore-engines
 
-      - name: npm audit (JSON report)
+      - name: yarn audit (JSON report)
         id: audit
-        run: npm audit --json > npm-audit.json 2>&1 || true
+        run: yarn audit --json > yarn-audit.jsonl 2>&1 || true
+
+      - name: Parse audit summary
+        id: summary
+        run: |
+          SUMMARY=$(grep '"type":"auditSummary"' yarn-audit.jsonl | tail -1 || echo "")
+          if [[ -n "$SUMMARY" ]]; then
+            CRITICAL=$(echo "$SUMMARY" | jq '.data.vulnerabilities.critical // 0')
+            HIGH=$(echo "$SUMMARY" | jq '.data.vulnerabilities.high // 0')
+            MODERATE=$(echo "$SUMMARY" | jq '.data.vulnerabilities.moderate // 0')
+            LOW=$(echo "$SUMMARY" | jq '.data.vulnerabilities.low // 0')
+            INFO=$(echo "$SUMMARY" | jq '.data.vulnerabilities.info // 0')
+          else
+            CRITICAL=0; HIGH=0; MODERATE=0; LOW=0; INFO=0
+          fi
+          TOTAL=$((CRITICAL + HIGH + MODERATE + LOW + INFO))
+          {
+            echo "critical=$CRITICAL"
+            echo "high=$HIGH"
+            echo "moderate=$MODERATE"
+            echo "low=$LOW"
+            echo "info=$INFO"
+            echo "total=$TOTAL"
+          } >> $GITHUB_OUTPUT
 
       - name: Security gate — block on CRITICAL
-        run: npm audit --audit-level=critical
+        if: steps.summary.outputs.critical != '0'
+        run: |
+          echo "❌ CRITICAL vulnerabilities found: ${{ steps.summary.outputs.critical }}"
+          exit 1
 
       - name: Summary
         if: always()
+        env:
+          CRITICAL: ${{ steps.summary.outputs.critical }}
+          HIGH: ${{ steps.summary.outputs.high }}
+          MODERATE: ${{ steps.summary.outputs.moderate }}
+          LOW: ${{ steps.summary.outputs.low }}
+          INFO: ${{ steps.summary.outputs.info }}
+          TOTAL: ${{ steps.summary.outputs.total }}
         run: |
-          if [[ -f npm-audit.json ]]; then
-            CRITICAL=$(jq '.metadata.vulnerabilities.critical // 0' npm-audit.json)
-            HIGH=$(jq '.metadata.vulnerabilities.high // 0' npm-audit.json)
-            MODERATE=$(jq '.metadata.vulnerabilities.moderate // 0' npm-audit.json)
-            LOW=$(jq '.metadata.vulnerabilities.low // 0' npm-audit.json)
-            TOTAL=$(jq '.metadata.vulnerabilities.total // 0' npm-audit.json)
-          else
-            CRITICAL=0; HIGH=0; MODERATE=0; LOW=0; TOTAL=0
-          fi
-
           {
-            if [[ "$CRITICAL" -gt 0 ]]; then
+            if [[ "${CRITICAL:-0}" -gt 0 ]]; then
               echo "## ❌ Dependency Security Gate FAILED"
               echo ""
-              echo "> **PR is blocked.** Fix all CRITICAL npm vulnerabilities before merging."
-              echo "> Run \`npm audit fix\` or update the affected packages."
+              echo "> **PR is blocked.** Fix all CRITICAL yarn vulnerabilities before merging."
+              echo "> Run \`yarn audit\` locally and update the affected packages."
             else
               echo "## ✅ Dependency Security Gate Passed"
             fi
             echo ""
-            echo "### npm audit Results"
+            echo "### yarn audit Results"
             echo ""
             echo "| Severity | Count |"
             echo "|----------|-------|"
-            echo "| 🔴 CRITICAL | **$CRITICAL** |"
-            echo "| 🟠 HIGH | $HIGH |"
-            echo "| 🟡 MODERATE | $MODERATE |"
-            echo "| 🔵 LOW | $LOW |"
-            echo "| **Total** | **$TOTAL** |"
-            if [[ "$TOTAL" -gt 0 ]]; then
+            echo "| 🔴 CRITICAL | **${CRITICAL:-0}** |"
+            echo "| 🟠 HIGH | ${HIGH:-0} |"
+            echo "| 🟡 MODERATE | ${MODERATE:-0} |"
+            echo "| 🔵 LOW | ${LOW:-0} |"
+            echo "| ⚪ INFO | ${INFO:-0} |"
+            echo "| **Total** | **${TOTAL:-0}** |"
+            if [[ "${TOTAL:-0}" -gt 0 ]]; then
               echo ""
-              echo "> Run \`npm audit\` locally for full details, or check **Security → Dependabot alerts** in this repo."
+              echo "> Run \`yarn audit\` locally for full details, or check **Security → Dependabot alerts** in this repo."
             fi
           } >> $GITHUB_STEP_SUMMARY

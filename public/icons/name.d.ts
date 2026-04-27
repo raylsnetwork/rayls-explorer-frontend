@@ -186,6 +186,7 @@
 	| "social/telegram_filled"
 	| "social/twitter_filled"
 	| "social/twitter"
+	| "social/youtube"
 	| "star_filled"
 	| "star_outline"
 	| "status/error"

@@ -36,50 +36,32 @@ const Footer = () => {
   });
   const apiVersionUrl = getApiVersionUrl(backendVersionData?.backend_version);
 
-  const BLOCKSCOUT_LINKS = [
-    {
-      icon: 'social/git' as const,
-      iconSize: '20px',
-      text: 'Contribute',
-      url: 'https://github.com/blockscout/blockscout',
-    },
-    {
-      icon: 'brands/pro_api' as const,
-      iconSize: '20px',
-      text: 'PRO API',
-      url: 'https://dev.blockscout.com',
-    },
-    {
-      icon: 'brands/autoscout' as const,
-      iconSize: '20px',
-      text: 'Autoscout',
-      url: 'https://autoscout.blockscout.com',
-    },
-    {
-      icon: 'docs' as const,
-      iconSize: '20px',
-      text: 'Docs',
-      url: 'https://docs.blockscout.com',
-    },
-    {
-      icon: 'social/twitter' as const,
-      iconSize: '24px',
-      text: 'X',
-      url: 'https://x.com/blockscout',
-    },
+  const RAYLS_LINKS = [
     {
       icon: 'social/discord' as const,
       iconSize: '24px',
       text: 'Discord',
-      url: 'https://discord.gg/blockscout',
+      url: 'https://discord.gg/6THZ96357r',
     },
     {
-      icon: 'brands/blockscout' as const,
-      iconSize: '20px',
-      text: 'All chains',
-      url: 'https://chains.blockscout.com',
+      icon: 'social/twitter' as const,
+      iconSize: '18px',
+      text: 'X (ex-Twitter)',
+      url: 'https://x.com/RaylsLabs',
     },
-  ].filter(Boolean);
+    {
+      icon: 'social/linkedin_filled' as const,
+      iconSize: '18px',
+      text: 'LinkedIn',
+      url: 'https://www.linkedin.com/company/rayls/',
+    },
+    {
+      icon: 'social/youtube' as const,
+      iconSize: '18px',
+      text: 'YouTube',
+      url: 'https://www.youtube.com/@Rayls_blockchain',
+    },
+  ];
 
   const frontendLink = (() => {
     if (config.UI.footer.frontendVersion) {
@@ -213,7 +195,7 @@ const Footer = () => {
           >
             {
               ([
-                { title: 'Blockscout', links: BLOCKSCOUT_LINKS },
+                { title: 'Rayls', links: RAYLS_LINKS },
                 ...(linksData || []),
               ])
                 .slice(0, colNum)
@@ -251,23 +233,22 @@ const Footer = () => {
 
         <Grid
           gridArea={{ lg: 'links-bottom' }}
-          gap={ 1 }
+          gap={{ base: 6, lg: 8 }}
           gridTemplateColumns={{
             base: 'repeat(auto-fill, 160px)',
-            lg: 'repeat(2, 160px)',
-            xl: 'repeat(3, 160px)',
+            lg: 'repeat(1, 160px)',
+            xl: 'repeat(1, 160px)',
           }}
-          gridTemplateRows={{
-            base: 'auto',
-            lg: 'repeat(3, auto)',
-            xl: 'repeat(2, auto)',
-          }}
-          gridAutoFlow={{ base: 'row', lg: 'column' }}
           alignContent="start"
           justifyContent={{ lg: 'flex-end' }}
           mt={{ base: 8, lg: 0 }}
         >
-          { BLOCKSCOUT_LINKS.map(link => <FooterLinkItem { ...link } key={ link.text }/>) }
+          <Box>
+            <Text fontWeight={ 500 } mb={ 3 } textStyle="xs">Rayls</Text>
+            <VStack gap={ 1 } alignItems="start">
+              { RAYLS_LINKS.map(link => <FooterLinkItem { ...link } key={ link.text }/>) }
+            </VStack>
+          </Box>
         </Grid>
       </Grid>
     </Box>
