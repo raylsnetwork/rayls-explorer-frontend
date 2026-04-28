@@ -107,8 +107,10 @@ jobs:
           push: ${{ inputs.push }}
           load: ${{ !inputs.push }}
           tags: ${{ steps.meta.outputs.tags }}
-          cache-from: type=gha,scope=${{ inputs.environment }}
-          cache-to: type=gha,mode=max,scope=${{ inputs.environment }}
+          # Cache shared across environments because the same image artifact
+          # is promoted from testnet to mainnet (no per-env rebuild).
+          cache-from: type=gha,scope=build
+          cache-to: type=gha,mode=max,scope=build
           build-args: |
             VITE_BASE_API_URL=${{ vars.VITE_BASE_API_URL }}
             VITE_REVENUE_JSON_URL=${{ vars.VITE_REVENUE_JSON_URL }}

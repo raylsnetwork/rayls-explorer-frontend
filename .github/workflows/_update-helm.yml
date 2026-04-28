@@ -15,7 +15,7 @@
 #       with:
 #         app_name: rayls-explorer-frontend
 #         environment: dev
-#         image_tag: dev-abc1234
+#         image_tag: abc1234
 #         values_file: blockscout-testnet/values.yaml
 #         image_tag_yaml_path: .frontend.image.tag      # optional, defaults to .image.tag
 #         helm_repo: raylsnetwork/rayls-public-helm-charts   # optional
@@ -35,7 +35,7 @@ on:
         required: true
         type: string
       environment:
-        description: "Target environment (dev | prod) — used in PR labels and copy"
+        description: "Target environment (dev | prod) — used in commit message, PR title/labels, and (by callers) to pick values_file"
         required: true
         type: string
       image_tag:
@@ -102,8 +102,12 @@ jobs:
           fi
 
       - name: Install yq
+        env:
+          YQ_VERSION: v4.44.3
+          YQ_SHA256: a2c097180dd884a8d50c956ee16a9cec070f30a7947cf4ebf87d5f36213e9ed7
         run: |
-          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64
+          sudo wget -qO /usr/local/bin/yq "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64"
+          echo "${YQ_SHA256}  /usr/local/bin/yq" | sha256sum -c -
           sudo chmod +x /usr/local/bin/yq
           yq --version
 
@@ -140,6 +144,7 @@ jobs:
           yq "$YAML_PATH" "$VALUES_FILE"
 
       - name: Commit and Push
+        id: commit
         working-directory: helm-charts
         env:
           BRANCH: ${{ steps.branch.outputs.name }}
@@ -155,6 +160,7 @@ jobs:
 
           if git diff --staged --quiet; then
             echo "⚠️  No changes to commit — tag is already up to date"
+            echo "committed=false" >> $GITHUB_OUTPUT
             exit 0
           fi
 
@@ -169,9 +175,11 @@ jobs:
           - Triggered by: $TRIGGER_REPO@$TRIGGER_SHA"
 
           git push origin "$BRANCH" --force-with-lease
+          echo "committed=true" >> $GITHUB_OUTPUT
 
       - name: Create or Update Pull Request
         id: create-pr
+        if: steps.commit.outputs.committed == 'true'
         working-directory: helm-charts
         env:
           GH_TOKEN: ${{ secrets.CICD_PAT }}
@@ -209,6 +217,7 @@ jobs:
           echo "📎 PR: $PR_URL"
 
       - name: Add Labels to PR
+        if: steps.commit.outputs.committed == 'true'
         working-directory: helm-charts
         env:
           GH_TOKEN: ${{ secrets.CICD_PAT }}
@@ -218,6 +227,7 @@ jobs:
           gh pr edit "$PR_NUMBER" --add-label "automated,helm-update,$ENVIRONMENT" 2>/dev/null || echo "⚠️  Labels not added (they may not exist in the repository)"
 
       - name: Auto-Merge PR
+        if: steps.commit.outputs.committed == 'true'
         working-directory: helm-charts
         env:
           GH_TOKEN: ${{ secrets.CICD_PAT }}
@@ -234,7 +244,17 @@ jobs:
           VALUES_FILE: ${{ inputs.values_file }}
           YAML_PATH: ${{ inputs.image_tag_yaml_path }}
           PR_URL: ${{ steps.create-pr.outputs.pr_url }}
+          COMMITTED: ${{ steps.commit.outputs.committed }}
         run: |
+          if [[ "$COMMITTED" != "true" ]]; then
+            {
+              echo "## 📦 Helm Chart — no-op"
+              echo ""
+              echo "Tag \`$IMAGE_TAG\` was already set at \`$YAML_PATH\` in \`$VALUES_FILE\`. No PR was opened."
+            } >> $GITHUB_STEP_SUMMARY
+            exit 0
+          fi
+
           {
             echo "## 📦 Helm Chart Updated"
             echo ""
