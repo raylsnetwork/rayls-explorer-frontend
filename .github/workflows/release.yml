@@ -4,8 +4,12 @@
 # Complete release pipeline: Build → Scan → Security Gate → Update Helm
 #
 # Triggers:
-#   - Push to main: Builds DEV image + auto-deploy to DEV (via ArgoCD)
-#   - Manual: Choose environment (prod requires confirmation)
+#   - Push to main: Builds image + auto-deploys to TESTNET (via ArgoCD)
+#   - Manual: Builds image + auto-deploys to TESTNET (toggle with `deploy: false`)
+#
+# A single SHA-tagged image is produced and deployed to testnet. Promoting the
+# same image to MAINNET is a separate manual action via deploy.yml (which
+# requires the DEPLOY-TO-PROD confirmation).
 #
 # Pipeline:
 #   ┌─────────┐     ┌─────────┐     ┌───────────────┐     ┌──────────────┐
@@ -20,7 +24,7 @@
 #     The override actor and timestamp are permanently recorded in
 #     GitHub Actions workflow run history.
 #
-# ⚠️  PROD deploys are MANUAL ONLY via deploy.yml
+# ⚠️  MAINNET deploys are MANUAL ONLY via deploy.yml
 # =============================================================================
 
 name: Release
@@ -28,14 +32,8 @@ name: Release
 on:
   workflow_dispatch:
     inputs:
-      environment:
-        description: "Target environment"
-        required: true
-        default: "dev"
-        type: choice
-        options: [dev, prod]
       deploy:
-        description: "Deploy after build"
+        description: "Deploy to TESTNET after build (uncheck to build only)"
         required: false
         default: true
         type: boolean
@@ -67,31 +65,23 @@ permissions:
 
 jobs:
   # ---------------------------------------------------------------------------
-  # Determine Environment
+  # Resolve should_deploy
+  # ---------------------------------------------------------------------------
+  # Push to main → always deploy. Manual dispatch → honor the `deploy` input
+  # (default: true). Mainnet promotions never run here — use deploy.yml.
   # ---------------------------------------------------------------------------
   setup:
     name: 🔧 Setup
     runs-on: ubuntu-latest-m
     outputs:
-      environment: ${{ steps.env.outputs.environment }}
       should_deploy: ${{ steps.env.outputs.should_deploy }}
     steps:
-      - name: Determine environment
+      - name: Determine should_deploy
         id: env
         run: |
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            echo "environment=${{ inputs.environment }}" >> $GITHUB_OUTPUT
-            # Manual dispatch: deploy only if requested AND environment is dev
-            # Prod deploys must go through deploy.yml with confirmation
-            if [[ "${{ inputs.environment }}" == "prod" ]]; then
-              echo "should_deploy=false" >> $GITHUB_OUTPUT
-              echo "::warning::⚠️ PROD deploy disabled in release.yml. Use deploy.yml for production deployments."
-            else
-              echo "should_deploy=${{ inputs.deploy }}" >> $GITHUB_OUTPUT
-            fi
+            echo "should_deploy=${{ inputs.deploy }}" >> $GITHUB_OUTPUT
           else
-            # Push to main: build and auto-deploy to dev
-            echo "environment=dev" >> $GITHUB_OUTPUT
             echo "should_deploy=true" >> $GITHUB_OUTPUT
           fi
 
@@ -104,7 +94,7 @@ jobs:
     uses: ./.github/workflows/_build.yml
     with:
       image_name: rayls-explorer-frontend
-      environment: ${{ needs.setup.outputs.environment }}
+      environment: dev
       push: true
     secrets: inherit
 
@@ -187,9 +177,9 @@ jobs:
     uses: ./.github/workflows/_update-helm.yml
     with:
       app_name: rayls-explorer-frontend
-      environment: ${{ needs.setup.outputs.environment }}
+      environment: dev
       image_tag: ${{ needs.build.outputs.image_tag }}
-      values_file: ${{ needs.setup.outputs.environment == 'prod' && 'blockscout-mainnet/values.yaml' || 'blockscout-testnet/values.yaml' }}
+      values_file: blockscout-testnet/values.yaml
       image_tag_yaml_path: .frontend.image.tag
     secrets: inherit
 
@@ -226,7 +216,7 @@ jobs:
             echo "| Security Gate | $GATE_STATUS |"
             echo "| Update Helm | ${{ needs.update-helm.result == 'success' && '✅' || needs.update-helm.result == 'skipped' && '⏭️' || needs.update-helm.result == 'cancelled' && '🚫' || '❌' }} |"
             echo ""
-            echo "**Environment:** \`${{ needs.setup.outputs.environment }}\`"
+            echo "**Target:** \`testnet (blockscout-testnet/values.yaml)\`"
             echo "**Image Tag:** \`${{ needs.build.outputs.image_tag }}\`"
             echo ""
             if [[ "${{ needs.update-helm.result }}" == "success" ]]; then
