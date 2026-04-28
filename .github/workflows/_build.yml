@@ -19,7 +19,9 @@
 #       secrets: inherit
 #
 # Outputs:
-#   image_tag:    Primary image tag (e.g. dev-abc1234)
+#   image_tag:    Primary image tag (short git SHA, e.g. abc1234) — same tag
+#                 is used across environments so testnet and mainnet can pin
+#                 the exact same image.
 #   image_digest: Image digest for verification
 #
 # Required org-level secrets (passed via secrets: inherit):
@@ -68,7 +70,7 @@ env:
 jobs:
   build:
     name: 🐳 Build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest-m
     environment: ${{ inputs.environment }}
     outputs:
       image_tag: ${{ steps.meta.outputs.version }}
@@ -95,7 +97,7 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ inputs.image_name }}
           tags: |
-            type=sha,prefix=${{ inputs.environment }}-,format=short
+            type=sha,format=short
 
       - name: Build and push
         id: build
@@ -105,8 +107,10 @@ jobs:
           push: ${{ inputs.push }}
           load: ${{ !inputs.push }}
           tags: ${{ steps.meta.outputs.tags }}
-          cache-from: type=gha,scope=${{ inputs.environment }}
-          cache-to: type=gha,mode=max,scope=${{ inputs.environment }}
+          # Cache shared across environments because the same image artifact
+          # is promoted from testnet to mainnet (no per-env rebuild).
+          cache-from: type=gha,scope=build
+          cache-to: type=gha,mode=max,scope=build
           build-args: |
             VITE_BASE_API_URL=${{ vars.VITE_BASE_API_URL }}
             VITE_REVENUE_JSON_URL=${{ vars.VITE_REVENUE_JSON_URL }}

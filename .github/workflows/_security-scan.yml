@@ -43,7 +43,7 @@ on:
 jobs:
   scan:
     name: 🔒 Trivy Image Scan
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest-m
     permissions:
       contents: read
       security-events: write

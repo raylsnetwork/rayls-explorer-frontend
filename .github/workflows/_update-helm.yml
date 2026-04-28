@@ -1,19 +1,24 @@
 # =============================================================================
 # Reusable Workflow: Update Helm Chart
 # =============================================================================
-# Updates the image tag in the Helm chart repository after a successful build.
-# Creates a PR, auto-approves it, and merges it to trigger ArgoCD sync.
+# Updates a single image tag inside a Helm values file, opens a PR against the
+# Helm charts repository, auto-merges it, and lets ArgoCD pick up the change.
+#
+# Surgical update via `yq`: only the field at `image_tag_yaml_path` is rewritten,
+# so charts with multiple `tag:` keys (PgBouncer, backend, frontend, etc.) are
+# safe.
 #
 # Usage:
 #   jobs:
 #     update-helm:
 #       uses: ./.github/workflows/_update-helm.yml
 #       with:
-#         app_name: my-app
+#         app_name: rayls-explorer-frontend
 #         environment: dev
-#         image_tag: dev-abc1234
+#         image_tag: abc1234
+#         values_file: blockscout-testnet/values.yaml
+#         image_tag_yaml_path: .frontend.image.tag      # optional, defaults to .image.tag
 #         helm_repo: raylsnetwork/rayls-public-helm-charts   # optional
-#         helm_repo_path: my-app                             # optional, defaults to app_name
 #       secrets: inherit
 #
 # Required org-level secrets (passed via secrets: inherit):
@@ -26,27 +31,31 @@ on:
   workflow_call:
     inputs:
       app_name:
-        description: "Application name (used in commit messages, branch names, and helm_repo_path if not set)"
+        description: "Application name (used in commit messages and PR titles)"
         required: true
         type: string
       environment:
-        description: "Target environment (dev | prod)"
+        description: "Target environment (dev | prod) — used in commit message, PR title/labels, and (by callers) to pick values_file"
         required: true
         type: string
       image_tag:
         description: "The new image tag"
         required: true
         type: string
+      values_file:
+        description: "Path to the values file inside the Helm repo (e.g. blockscout-mainnet/values.yaml)"
+        required: true
+        type: string
+      image_tag_yaml_path:
+        description: "yq path to the image tag field inside values_file"
+        required: false
+        type: string
+        default: ".image.tag"
       helm_repo:
         description: "Helm charts repository (owner/repo)"
         required: false
         type: string
         default: "raylsnetwork/rayls-public-helm-charts"
-      helm_repo_path:
-        description: "Path within the Helm repo for this app (defaults to app_name)"
-        required: false
-        type: string
-        default: ""
     secrets:
       CICD_PAT:
         required: true
@@ -54,7 +63,7 @@ on:
 jobs:
   update-helm:
     name: 📦 Update Helm Chart
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest-m
     steps:
       - name: Checkout Helm Charts Repository
         uses: actions/checkout@v4
@@ -63,31 +72,26 @@ jobs:
           token: ${{ secrets.CICD_PAT }}
           path: helm-charts
 
-      - name: Determine Values File
-        id: values
+      - name: Compute branch name
+        id: branch
+        env:
+          VALUES_FILE: ${{ inputs.values_file }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
         run: |
-          APP_PATH="${{ inputs.helm_repo_path || inputs.app_name }}"
-          if [[ "${{ inputs.environment }}" == "prod" ]]; then
-            echo "file=values-prod.yaml" >> $GITHUB_OUTPUT
-            echo "branch=update-${{ inputs.app_name }}-prod-${{ inputs.image_tag }}" >> $GITHUB_OUTPUT
-          else
-            echo "file=values-dev.yaml" >> $GITHUB_OUTPUT
-            echo "branch=update-${{ inputs.app_name }}-dev-${{ inputs.image_tag }}" >> $GITHUB_OUTPUT
-          fi
-          echo "app_path=$APP_PATH" >> $GITHUB_OUTPUT
+          # Sanitize the values_file path into a branch-safe slug
+          SLUG=$(echo "$VALUES_FILE" | tr '/' '-' | sed 's/\.yaml$//')
+          echo "name=update-${SLUG}-${IMAGE_TAG}" >> $GITHUB_OUTPUT
 
       - name: Setup Git and Branch
         working-directory: helm-charts
+        env:
+          BRANCH: ${{ steps.branch.outputs.name }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          BRANCH="${{ steps.values.outputs.branch }}"
-
-          # Fetch remote branches
           git fetch origin
 
-          # Check if branch exists remotely
           if git ls-remote --heads origin "$BRANCH" | grep -q "$BRANCH"; then
             echo "📌 Branch $BRANCH already exists, checking it out..."
             git checkout "$BRANCH"
@@ -97,67 +101,101 @@ jobs:
             git checkout -b "$BRANCH"
           fi
 
+      - name: Install yq
+        env:
+          YQ_VERSION: v4.44.3
+          YQ_SHA256: a2c097180dd884a8d50c956ee16a9cec070f30a7947cf4ebf87d5f36213e9ed7
+        run: |
+          sudo wget -qO /usr/local/bin/yq "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64"
+          echo "${YQ_SHA256}  /usr/local/bin/yq" | sha256sum -c -
+          sudo chmod +x /usr/local/bin/yq
+          yq --version
+
       - name: Update Image Tag
         working-directory: helm-charts
+        env:
+          VALUES_FILE: ${{ inputs.values_file }}
+          TAG: ${{ inputs.image_tag }}
+          YAML_PATH: ${{ inputs.image_tag_yaml_path }}
         run: |
-          VALUES_FILE="${{ steps.values.outputs.app_path }}/${{ steps.values.outputs.file }}"
-          TAG="${{ inputs.image_tag }}"
-
           # Validate tag format to prevent injection (only alphanumeric, hyphens, dots, underscores)
           if ! [[ "$TAG" =~ ^[a-zA-Z0-9_.-]+$ ]]; then
             echo "❌ Invalid image tag format: $TAG"
             exit 1
           fi
 
-          echo "📝 Updating $VALUES_FILE with tag: $TAG"
+          # Validate yaml path: must start with '.' and contain only letters, digits, dots, underscores, hyphens, brackets, quotes
+          if ! [[ "$YAML_PATH" =~ ^\.[a-zA-Z0-9_.\[\]\"'-]+$ ]]; then
+            echo "❌ Invalid yaml path: $YAML_PATH"
+            exit 1
+          fi
 
-          # Use sed to update the image tag
-          sed -i "s/tag: \".*\"/tag: \"${TAG}\"/" "$VALUES_FILE"
+          if [[ ! -f "$VALUES_FILE" ]]; then
+            echo "❌ Values file not found: $VALUES_FILE"
+            exit 1
+          fi
 
-          # Verify the change
-          echo "📋 Updated content:"
-          grep -A2 "^image:" "$VALUES_FILE"
+          echo "📝 Updating $VALUES_FILE: $YAML_PATH = $TAG"
+
+          # Surgical update via yq — only rewrites the targeted field
+          yq -i "$YAML_PATH = \"$TAG\"" "$VALUES_FILE"
+
+          echo "📋 Updated value:"
+          yq "$YAML_PATH" "$VALUES_FILE"
 
       - name: Commit and Push
+        id: commit
         working-directory: helm-charts
+        env:
+          BRANCH: ${{ steps.branch.outputs.name }}
+          APP_NAME: ${{ inputs.app_name }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
+          VALUES_FILE: ${{ inputs.values_file }}
+          YAML_PATH: ${{ inputs.image_tag_yaml_path }}
+          TRIGGER_REPO: ${{ github.repository }}
+          TRIGGER_SHA: ${{ github.sha }}
         run: |
-          BRANCH="${{ steps.values.outputs.branch }}"
-
-          # Stage changes
           git add .
 
-          # Only commit if there are changes
           if git diff --staged --quiet; then
-            echo "⚠️  No changes to commit - tag is already up to date"
+            echo "⚠️  No changes to commit — tag is already up to date"
+            echo "committed=false" >> $GITHUB_OUTPUT
             exit 0
           fi
 
-          git commit -m "chore(${{ inputs.app_name }}): update ${{ inputs.environment }} image tag to ${{ inputs.image_tag }}
+          git commit -m "chore($APP_NAME): update $ENVIRONMENT image tag to $IMAGE_TAG
 
           Automated update from CI/CD pipeline.
 
-          - Environment: ${{ inputs.environment }}
-          - Image: registry.digitalocean.com/rayls-public-chain-registry/${{ inputs.app_name }}:${{ inputs.image_tag }}
-          - Triggered by: ${{ github.repository }}@${{ github.sha }}"
+          - Environment: $ENVIRONMENT
+          - Values file: $VALUES_FILE
+          - YAML path: $YAML_PATH
+          - Image: registry.digitalocean.com/rayls-public-chain-registry/$APP_NAME:$IMAGE_TAG
+          - Triggered by: $TRIGGER_REPO@$TRIGGER_SHA"
 
-          # Push with force-with-lease to safely overwrite if needed
           git push origin "$BRANCH" --force-with-lease
+          echo "committed=true" >> $GITHUB_OUTPUT
 
       - name: Create or Update Pull Request
         id: create-pr
+        if: steps.commit.outputs.committed == 'true'
         working-directory: helm-charts
         env:
           GH_TOKEN: ${{ secrets.CICD_PAT }}
+          BRANCH: ${{ steps.branch.outputs.name }}
+          APP_NAME: ${{ inputs.app_name }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
+          VALUES_FILE: ${{ inputs.values_file }}
+          YAML_PATH: ${{ inputs.image_tag_yaml_path }}
+          HELM_REPO: ${{ inputs.helm_repo }}
         run: |
-          BRANCH="${{ steps.values.outputs.branch }}"
-
-          # Check if a PR already exists for this branch
           EXISTING_PR=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number' 2>/dev/null)
 
           if [[ -n "$EXISTING_PR" ]]; then
             echo "📝 PR #$EXISTING_PR already exists for branch $BRANCH"
-            echo "✅ Branch has been updated with the latest commit"
-            PR_URL="https://github.com/${{ inputs.helm_repo }}/pull/$EXISTING_PR"
+            PR_URL="https://github.com/$HELM_REPO/pull/$EXISTING_PR"
             echo "pr_url=$PR_URL" >> $GITHUB_OUTPUT
             echo "pr_number=$EXISTING_PR" >> $GITHUB_OUTPUT
             echo "existing=true" >> $GITHUB_OUTPUT
@@ -165,8 +203,8 @@ jobs:
             echo "🆕 Creating new PR for branch $BRANCH"
 
             PR_URL=$(gh pr create \
-              --title "chore(${{ inputs.app_name }}): update ${{ inputs.environment }} to ${{ inputs.image_tag }}" \
-              --body "Automated Helm Chart Update - Application: ${{ inputs.app_name }}, Environment: ${{ inputs.environment }}, Image Tag: ${{ inputs.image_tag }}" \
+              --title "chore($APP_NAME): update $ENVIRONMENT to $IMAGE_TAG" \
+              --body "Automated Helm Chart Update — Application: $APP_NAME, Environment: $ENVIRONMENT, Image Tag: $IMAGE_TAG, Values: $VALUES_FILE ($YAML_PATH)" \
               --base main \
               --head "$BRANCH")
 
@@ -179,37 +217,55 @@ jobs:
           echo "📎 PR: $PR_URL"
 
       - name: Add Labels to PR
+        if: steps.commit.outputs.committed == 'true'
         working-directory: helm-charts
         env:
           GH_TOKEN: ${{ secrets.CICD_PAT }}
+          PR_NUMBER: ${{ steps.create-pr.outputs.pr_number }}
+          ENVIRONMENT: ${{ inputs.environment }}
         run: |
-          PR_NUMBER="${{ steps.create-pr.outputs.pr_number }}"
-
-          # Try to add labels (optional - don't fail if labels don't exist)
-          gh pr edit "$PR_NUMBER" --add-label "automated,helm-update,${{ inputs.environment }}" 2>/dev/null || echo "⚠️  Labels not added (they may not exist in the repository)"
-
-          echo "✅ Labels added (if they exist)"
+          gh pr edit "$PR_NUMBER" --add-label "automated,helm-update,$ENVIRONMENT" 2>/dev/null || echo "⚠️  Labels not added (they may not exist in the repository)"
 
       - name: Auto-Merge PR
+        if: steps.commit.outputs.committed == 'true'
         working-directory: helm-charts
         env:
           GH_TOKEN: ${{ secrets.CICD_PAT }}
+          PR_NUMBER: ${{ steps.create-pr.outputs.pr_number }}
         run: |
-          PR_NUMBER="${{ steps.create-pr.outputs.pr_number }}"
-
           echo "🔀 Auto-merging PR #$PR_NUMBER"
           gh pr merge "$PR_NUMBER" --squash --auto --delete-branch
 
       - name: Summary
+        env:
+          APP_NAME: ${{ inputs.app_name }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
+          VALUES_FILE: ${{ inputs.values_file }}
+          YAML_PATH: ${{ inputs.image_tag_yaml_path }}
+          PR_URL: ${{ steps.create-pr.outputs.pr_url }}
+          COMMITTED: ${{ steps.commit.outputs.committed }}
         run: |
-          echo "## 📦 Helm Chart Updated" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
-          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| App | \`${{ inputs.app_name }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Environment | \`${{ inputs.environment }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Image Tag | \`${{ inputs.image_tag }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Values File | \`${{ steps.values.outputs.file }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| PR | ${{ steps.create-pr.outputs.pr_url }} |" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "🔄 ArgoCD will automatically sync the deployment once the PR is merged." >> $GITHUB_STEP_SUMMARY
+          if [[ "$COMMITTED" != "true" ]]; then
+            {
+              echo "## 📦 Helm Chart — no-op"
+              echo ""
+              echo "Tag \`$IMAGE_TAG\` was already set at \`$YAML_PATH\` in \`$VALUES_FILE\`. No PR was opened."
+            } >> $GITHUB_STEP_SUMMARY
+            exit 0
+          fi
+
+          {
+            echo "## 📦 Helm Chart Updated"
+            echo ""
+            echo "| Property | Value |"
+            echo "|----------|-------|"
+            echo "| App | \`$APP_NAME\` |"
+            echo "| Environment | \`$ENVIRONMENT\` |"
+            echo "| Image Tag | \`$IMAGE_TAG\` |"
+            echo "| Values file | \`$VALUES_FILE\` |"
+            echo "| YAML path | \`$YAML_PATH\` |"
+            echo "| PR | $PR_URL |"
+            echo ""
+            echo "🔄 ArgoCD will automatically sync the deployment once the PR is merged."
+          } >> $GITHUB_STEP_SUMMARY

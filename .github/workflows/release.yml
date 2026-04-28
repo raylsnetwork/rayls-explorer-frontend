@@ -71,7 +71,7 @@ jobs:
   # ---------------------------------------------------------------------------
   setup:
     name: 🔧 Setup
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest-m
     outputs:
       environment: ${{ steps.env.outputs.environment }}
       should_deploy: ${{ steps.env.outputs.should_deploy }}
@@ -127,7 +127,7 @@ jobs:
   # ---------------------------------------------------------------------------
   gate:
     name: 🛡️ Security Gate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest-m
     needs: [scan]
     continue-on-error: ${{ inputs.skip_security_gate || false }}
     steps:
@@ -189,7 +189,8 @@ jobs:
       app_name: rayls-explorer-frontend
       environment: ${{ needs.setup.outputs.environment }}
       image_tag: ${{ needs.build.outputs.image_tag }}
-      helm_repo_path: blockscout-testnet
+      values_file: ${{ needs.setup.outputs.environment == 'prod' && 'blockscout-mainnet/values.yaml' || 'blockscout-testnet/values.yaml' }}
+      image_tag_yaml_path: .frontend.image.tag
     secrets: inherit
 
   # ---------------------------------------------------------------------------
@@ -197,7 +198,7 @@ jobs:
   # ---------------------------------------------------------------------------
   summary:
     name: 📋 Summary
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest-m
     needs: [setup, build, scan, gate, update-helm]
     if: always()
     steps:

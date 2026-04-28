@@ -9,9 +9,10 @@
 #     "DEPLOY-TO-PROD" into the prod_confirmation input.
 #
 # Usage:
-#   - Dev deploy: Select environment "dev", provide image tag (e.g. dev-abc1234)
-#   - Prod deploy: Select "prod", provide image tag, type "DEPLOY-TO-PROD"
-#                  in the prod_confirmation field
+#   - Dev deploy: Select environment "dev", provide image tag (short git SHA, e.g. abc1234)
+#   - Prod deploy: Select "prod", provide same image tag, type "DEPLOY-TO-PROD"
+#                  in the prod_confirmation field — the same SHA-tagged image
+#                  is promoted from testnet to mainnet without rebuilding
 #   - Rollback: Enter a previous image tag
 #
 # Requirements:
@@ -31,7 +32,7 @@ on:
         type: choice
         options: [dev, prod]
       image_tag:
-        description: "Image tag to deploy (e.g. dev-abc1234 or prod-abc1234)"
+        description: "Image tag to deploy (short git SHA, e.g. abc1234 — same tag works for testnet and mainnet)"
         required: true
         type: string
       prod_confirmation:
@@ -45,7 +46,7 @@ jobs:
   # ---------------------------------------------------------------------------
   validate:
     name: ✅ Validate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest-m
     outputs:
       image_tag: ${{ inputs.image_tag }}
     steps:
@@ -54,7 +55,7 @@ jobs:
           IMAGE_TAG: ${{ inputs.image_tag }}
         run: |
           if [[ -z "$IMAGE_TAG" ]]; then
-            echo "image_tag is required. Provide an explicit tag (e.g. dev-abc1234)."
+            echo "image_tag is required. Provide an explicit tag (short git SHA, e.g. abc1234)."
             exit 1
           fi
 
@@ -142,4 +143,6 @@ jobs:
       app_name: rayls-explorer-frontend
       environment: ${{ inputs.environment }}
       image_tag: ${{ needs.validate.outputs.image_tag }}
+      values_file: ${{ inputs.environment == 'prod' && 'blockscout-mainnet/values.yaml' || 'blockscout-testnet/values.yaml' }}
+      image_tag_yaml_path: .frontend.image.tag
     secrets: inherit
