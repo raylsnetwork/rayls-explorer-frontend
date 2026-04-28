@@ -63,7 +63,7 @@ on:
 jobs:
   update-helm:
     name: 📦 Update Helm Chart
-    runs-on: ubuntu-latest-m
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout Helm Charts Repository
         uses: actions/checkout@v4
