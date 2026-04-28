@@ -34,7 +34,7 @@ on:
 jobs:
   validate:
     name: 🔍 Validate (Node.js)
-    runs-on: ubuntu-latest-m
+    runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4

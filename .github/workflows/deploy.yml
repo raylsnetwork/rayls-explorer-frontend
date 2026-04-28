@@ -46,7 +46,7 @@ jobs:
   # ---------------------------------------------------------------------------
   validate:
     name: ✅ Validate
-    runs-on: ubuntu-latest-m
+    runs-on: ubuntu-latest
     outputs:
       image_tag: ${{ inputs.image_tag }}
     steps:
