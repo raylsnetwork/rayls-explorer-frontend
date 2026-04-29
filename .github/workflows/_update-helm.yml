@@ -15,7 +15,7 @@
 #       with:
 #         app_name: rayls-explorer-frontend
 #         environment: dev
-#         image_tag: abc1234
+#         image_tag: 2026.04.29-3ebda45
 #         values_file: blockscout-testnet/values.yaml
 #         image_tag_yaml_path: .frontend.image.tag      # optional, defaults to .image.tag
 #         helm_repo: raylsnetwork/rayls-public-helm-charts   # optional
