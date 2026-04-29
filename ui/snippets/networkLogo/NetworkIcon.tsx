@@ -14,8 +14,8 @@ const IconFallback = () => {
   return (
     <IconSvg
       name="networks/icon-placeholder"
-      w="30px"
-      h="30px"
+      w="60px"
+      h="60px"
       color={{ base: 'blue.600', _dark: 'white' }}
       aria-label="Network icon placeholder"
     />
@@ -37,14 +37,14 @@ const NetworkIcon = ({ className }: Props) => {
       aria-label="Link to main page"
     >
       <Image
-        w="30px"
-        h="30px"
+        w="60px"
+        h="60px"
         src={ iconSrc }
         alt={ `${ config.chain.name } network icon` }
         fallback={ <IconFallback/> }
         filter={{ _dark: !config.UI.navigation.icon.dark ? INVERT_FILTER : undefined }}
         objectFit="contain"
-        objectPosition="left"
+        objectPosition="center"
       />
     </chakra.a>
   );
