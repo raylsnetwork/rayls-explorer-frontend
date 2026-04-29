@@ -145,7 +145,15 @@ RUN cd ./deploy/tools/llms-txt-generator && yarn build
 # *****************************
 # Production image, copy all the files and run next
 FROM node:22.14.0-alpine AS runner
-RUN apk add --no-cache --upgrade bash curl jq unzip
+# - apk upgrade pulls patched musl-utils (CVE-2026-40200) and any other base fixes.
+# - Drop the bundled npm CLI: runtime uses node + yarn only, but
+#   /usr/local/lib/node_modules/npm ships its own vulnerable
+#   tar/glob/minimatch copies that we never execute.
+RUN apk upgrade --no-cache && \
+    apk add --no-cache --upgrade bash curl jq unzip && \
+    rm -rf /usr/local/lib/node_modules/npm \
+           /usr/local/bin/npm \
+           /usr/local/bin/npx
 
 ### APP
 WORKDIR /app
