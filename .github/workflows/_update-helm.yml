@@ -124,8 +124,12 @@ jobs:
             exit 1
           fi
 
-          # Validate yaml path: must start with '.' and contain only letters, digits, dots, underscores, hyphens, brackets, quotes
-          if ! [[ "$YAML_PATH" =~ ^\.[a-zA-Z0-9_.\[\]\"'-]+$ ]]; then
+          # Validate yaml path: must start with a dot and contain only letters,
+          # digits, dots, underscores, hyphens, and brackets. POSIX bracket-class
+          # form requires ']' first and '[' later to be treated as literals
+          # ('^\.[][a-zA-Z0-9_.-]+$'); a lone single-quote in the class would
+          # break the bash lexer.
+          if ! [[ "$YAML_PATH" =~ ^\.[][a-zA-Z0-9_.-]+$ ]]; then
             echo "❌ Invalid yaml path: $YAML_PATH"
             exit 1
           fi
