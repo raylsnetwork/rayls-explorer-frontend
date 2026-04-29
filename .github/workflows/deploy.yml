@@ -9,10 +9,10 @@
 #     "DEPLOY-TO-PROD" into the prod_confirmation input.
 #
 # Usage:
-#   - Dev deploy: Select environment "dev", provide image tag (short git SHA, e.g. abc1234)
+#   - Dev deploy: Select environment "dev", provide image tag (date+sha, e.g. 2026.04.29-3ebda45)
 #   - Prod deploy: Select "prod", provide same image tag, type "DEPLOY-TO-PROD"
-#                  in the prod_confirmation field — the same SHA-tagged image
-#                  is promoted from testnet to mainnet without rebuilding
+#                  in the prod_confirmation field — the same image is promoted
+#                  from testnet to mainnet without rebuilding
 #   - Rollback: Enter a previous image tag
 #
 # Requirements:
@@ -32,7 +32,7 @@ on:
         type: choice
         options: [dev, prod]
       image_tag:
-        description: "Image tag to deploy (short git SHA, e.g. abc1234 — same tag works for testnet and mainnet)"
+        description: "Image tag to deploy (date+sha, e.g. 2026.04.29-3ebda45 — same tag works for testnet and mainnet)"
         required: true
         type: string
       prod_confirmation:
@@ -55,7 +55,7 @@ jobs:
           IMAGE_TAG: ${{ inputs.image_tag }}
         run: |
           if [[ -z "$IMAGE_TAG" ]]; then
-            echo "image_tag is required. Provide an explicit tag (short git SHA, e.g. abc1234)."
+            echo "image_tag is required. Provide an explicit tag (date+sha, e.g. 2026.04.29-3ebda45)."
             exit 1
           fi
 

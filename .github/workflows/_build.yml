@@ -19,9 +19,9 @@
 #       secrets: inherit
 #
 # Outputs:
-#   image_tag:    Primary image tag (short git SHA, e.g. abc1234) — same tag
-#                 is used across environments so testnet and mainnet can pin
-#                 the exact same image.
+#   image_tag:    Primary image tag in <UTC date>-<short sha> format, e.g.
+#                 2026.04.29-3ebda45. Same tag is promoted from testnet to
+#                 mainnet so both environments pin the exact same image.
 #   image_digest: Image digest for verification
 #
 # Required org-level secrets (passed via secrets: inherit):
@@ -96,8 +96,12 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ inputs.image_name }}
+          # Tag format: <UTC date>-<short sha>, e.g. 2026.04.29-3ebda45
+          # Sortable lexicographically (newer > older), traceable to a commit,
+          # human-readable. Same image is promoted from testnet to mainnet so the
+          # tag identifies the build, not the environment.
           tags: |
-            type=sha,format=short
+            type=raw,value={{date 'YYYY.MM.DD'}}-{{sha}}
 
       - name: Build and push
         id: build
