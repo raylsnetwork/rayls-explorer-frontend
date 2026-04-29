@@ -122,6 +122,5 @@ jobs:
           echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
           echo "| Image | \`${{ env.REGISTRY }}/${{ inputs.image_name }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Environment | \`${{ inputs.environment }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Tag | \`${{ steps.meta.outputs.version }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Pushed | \`${{ inputs.push }}\` |" >> $GITHUB_STEP_SUMMARY
