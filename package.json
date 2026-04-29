@@ -206,10 +206,10 @@
     "@types/react": "18.3.12",
     "@types/react-dom": "18.3.1",
     "wagmi/**/ws": "8.17.1",
-    "@helia/verified-fetch/**/axios": "1.13.5",
+    "@helia/verified-fetch/**/axios": "1.15.2",
     "@helia/verified-fetch/**/tar-fs": "2.1.4",
     "@helia/verified-fetch/**/node-forge": "1.4.0",
-    "@multisender.app/multisender-react-widget/**/axios": "1.13.5",
+    "@multisender.app/multisender-react-widget/**/axios": "1.15.2",
     "@reown/appkit/**/node-forge": "1.4.0",
     "@reown/appkit-adapter-wagmi/**/node-forge": "1.4.0",
     "eslint/**/brace-expansion": "1.1.12",
@@ -218,14 +218,18 @@
     "viem/**/@noble/hashes": "1.8.0",
     "@walletconnect/ethereum-provider/**/@reown/appkit/**/@noble/hashes": "1.8.0",
     "protobufjs": "7.5.5",
-    "axios": "1.13.5",
+    "axios": "1.15.2",
     "node-forge": "1.4.0",
     "undici": "6.24.0",
     "preact": "10.28.2",
     "lodash": "4.18.1",
     "socket.io-parser": "4.2.6",
     "micromatch/**/picomatch": "2.3.2",
-    "engine.io-client/**/ws": "8.17.1"
+    "engine.io-client/**/ws": "8.17.1",
+    "markdown-it": "14.1.1",
+    "bn.js": "5.2.3",
+    "follow-redirects": "1.16.0",
+    "next/**/postcss": "8.5.10"
   },
   "packageManager": "yarn@1.22.22+sha512.a6b2f7906b721bba3d67d4aff083df04dad64c399707841b7acf00f6b133b7ac24255f2652fa22ae3534329dc6180534e98d17432037ff6fd140556e2bb3137e"
 }
