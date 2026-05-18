@@ -246,7 +246,15 @@ jobs:
           BODYEOF
 
           sed -i "s|FINDINGS_COUNT|$FINDINGS|g" issue-body.md
-          sed -i "s|FINDINGS_TABLE_PLACEHOLDER|$FINDINGS_TABLE|g" issue-body.md
+
+          # FINDINGS_TABLE is multi-line and contains `|` (the sed delimiter),
+          # so injecting it with `s|...|...|g` blows up. Use `r` to read the
+          # table from a file into the placeholder line, then `d` to drop the
+          # placeholder itself — this works regardless of the table's content.
+          printf '%s\n' "$FINDINGS_TABLE" > findings-table.md
+          sed -i -e '/FINDINGS_TABLE_PLACEHOLDER/r findings-table.md' \
+                 -e '/FINDINGS_TABLE_PLACEHOLDER/d' issue-body.md
+
           sed -i "s|RUN_URL_PLACEHOLDER|$RUN_URL|g" issue-body.md
           sed -i "s|SCOPE_PLACEHOLDER|$SCOPE|g" issue-body.md
           sed -i "s|MODE_PLACEHOLDER|$MODE|g" issue-body.md
