@@ -27,7 +27,9 @@
         // Posthog project key
         "phc_\\w+",
         // GitHub account names
-        "@(\\w|-)+"
+        "@(\\w|-)+",
+        // Slack channel IDs
+        "C[A-Z0-9]{8,}"
     ],
     // words - list of words to be always considered correct
     "words": [
