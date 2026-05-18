@@ -52,7 +52,7 @@ on:
         required: false
         type: string
     secrets:
-      SLACK_BOT_TOKEN:
+      SLACK_WEBHOOK_URL:
         required: false
 
 permissions:
@@ -179,17 +179,20 @@ jobs:
       # Notify Slack on findings
       # Issues are disabled on this repo (it's a fork of Blockscout), so Slack
       # is the active alert channel. The job summary still shows the table.
+      #
+      # Uses an Incoming Webhook URL (channel is bound to the webhook itself)
+      # instead of a workspace-wide bot token, to minimize blast radius on
+      # this public repository — a leaked webhook can only post to one channel.
       # -----------------------------------------------------------------------
       - name: Notify Slack on findings
         if: steps.scan.outputs.findings_count != '0'
         continue-on-error: true
         uses: slackapi/slack-github-action@91efab103c0de0a537f72a35f6b8cda0ee76bf0a # v2.1.1
         with:
-          method: chat.postMessage
-          token: ${{ secrets.SLACK_BOT_TOKEN }}
+          webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
           payload: |
             {
-              "channel": "C0AASHLNKQE",
               "text": ":rotating_light: *TruffleHog detected ${{ steps.scan.outputs.findings_count }} secret(s)* in `${{ github.repository }}`",
               "blocks": [
                 {
