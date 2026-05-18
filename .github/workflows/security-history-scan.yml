@@ -31,7 +31,6 @@ on:
 
 permissions:
   contents: read
-  issues: write
 
 jobs:
   scan:
@@ -41,4 +40,5 @@ jobs:
       since_commit: ${{ inputs.since_commit || '' }}
     permissions:
       contents: read
-      issues: write
+    secrets:
+      SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
