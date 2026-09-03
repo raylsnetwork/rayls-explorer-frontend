@@ -71,7 +71,7 @@ jobs:
   build:
     name: 🐳 Build and push to ECR
     if: inputs.image_tag == ''
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     environment: ${{ inputs.environment }}-${{ inputs.channel }}
     env:
       AWS_REGION: ${{ vars.AWS_REGION }}
@@ -107,7 +107,7 @@ jobs:
           context: .
           push: true
           tags: ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.tag }}
-          platforms: linux/amd64
+          platforms: linux/arm64
           cache-from: type=gha,scope=rayls-explorer-frontend-ecr
           cache-to: type=gha,mode=max,scope=rayls-explorer-frontend-ecr
 
@@ -119,6 +119,7 @@ jobs:
           echo "|----------|-------|" >> "$GITHUB_STEP_SUMMARY"
           echo "| Image | \`${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Tag | \`${{ steps.meta.outputs.tag }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Platform | \`linux/arm64\` |" >> "$GITHUB_STEP_SUMMARY"
 
   # ---------------------------------------------------------------------------
   # Deploy - patch the target appset in the gitops repo
