@@ -69,10 +69,18 @@ jobs:
   # Build - only runs when no existing image_tag was supplied
   # ---------------------------------------------------------------------------
   build:
-    name: 🐳 Build and push to ECR
+    name: 🐳 Build (${{ matrix.platform }})
     if: inputs.image_tag == ''
-    runs-on: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     environment: ${{ inputs.environment }}-${{ inputs.channel }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
     env:
       AWS_REGION: ${{ vars.AWS_REGION }}
       ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}
@@ -101,33 +109,111 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build and push
+      - name: Prepare platform slug
+        id: platform
+        run: echo "slug=${platform//\//-}" >> "$GITHUB_OUTPUT"
+        env:
+          platform: ${{ matrix.platform }}
+
+      - name: Build and push by digest
+        id: build
         uses: docker/build-push-action@v5
         with:
           context: .
-          push: true
-          tags: ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.tag }}
-          platforms: linux/arm64
-          cache-from: type=gha,scope=rayls-explorer-frontend-ecr
-          cache-to: type=gha,mode=max,scope=rayls-explorer-frontend-ecr
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=rayls-explorer-frontend-ecr-${{ matrix.platform }}
+          cache-to: type=gha,mode=max,scope=rayls-explorer-frontend-ecr-${{ matrix.platform }}
+
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: ecr-digests-${{ steps.platform.outputs.slug }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Summary
         run: |
-          echo "## 🐳 Build Complete" >> "$GITHUB_STEP_SUMMARY"
+          echo "## 🐳 Build Complete (${{ matrix.platform }})" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "| Property | Value |" >> "$GITHUB_STEP_SUMMARY"
           echo "|----------|-------|" >> "$GITHUB_STEP_SUMMARY"
           echo "| Image | \`${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Tag | \`${{ steps.meta.outputs.tag }}\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Platform | \`linux/arm64\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Digest | \`${{ steps.build.outputs.digest }}\` |" >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------
+  # Merge - combine the per-platform digests into one multi-arch manifest
+  # ---------------------------------------------------------------------------
+  merge:
+    name: 🔗 Merge manifest
+    if: inputs.image_tag == ''
+    needs: [build]
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}-${{ inputs.channel }}
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}
+      ROLE_ARN: ${{ vars.ROLE_ARN }}
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: ecr-digests-*
+          merge-multiple: true
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Create manifest list and push
+        working-directory: /tmp/digests
+        env:
+          TAG: ${{ needs.build.outputs.image_tag }}
+        run: |
+          docker buildx imagetools create \
+            -t "${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG}" \
+            $(printf '${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}@sha256:%s ' *)
+
+      - name: Summary
+        env:
+          TAG: ${{ needs.build.outputs.image_tag }}
+        run: |
+          echo "## 🔗 Manifest merged" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Property | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|----------|-------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Image | \`${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Platforms | \`linux/amd64, linux/arm64\` |" >> "$GITHUB_STEP_SUMMARY"
 
   # ---------------------------------------------------------------------------
   # Deploy - patch the target appset in the gitops repo
   # ---------------------------------------------------------------------------
   deploy:
     name: 📦 Patch ArgoCD appset
-    needs: [build]
-    if: always() && (needs.build.result == 'success' || needs.build.result == 'skipped')
+    needs: [build, merge]
+    if: >-
+      always() &&
+      (
+        (needs.build.result == 'success' && needs.merge.result == 'success') ||
+        (needs.build.result == 'skipped' && needs.merge.result == 'skipped')
+      )
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}-${{ inputs.channel }}
     env:
