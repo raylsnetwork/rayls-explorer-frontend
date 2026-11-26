@@ -61,7 +61,6 @@ import { CollapsibleDetails } from 'src/toolkit/chakra/collapsible';
 import { Link } from 'src/toolkit/chakra/link';
 import { Skeleton } from 'src/toolkit/chakra/skeleton';
 
-import TxDetailsBurntFees from './parts/TxDetailsBurntFees';
 import TxDetailsFeePerGas from './parts/TxDetailsFeePerGas';
 import TxDetailsGasPrice from './parts/TxDetailsGasPrice';
 import TxDetailsGasUsage from './parts/TxDetailsGasUsage';
@@ -606,8 +605,6 @@ const TxDetails = ({ data, isLoading, socketStatus, noTxActions }: Props) => {
           </DetailedInfo.ItemValue>
         </>
       ) }
-
-      <TxDetailsBurntFees data={ data } isLoading={ isLoading }/>
 
       { rollupFeature.isEnabled && rollupFeature.type === 'optimistic' && (
         <>

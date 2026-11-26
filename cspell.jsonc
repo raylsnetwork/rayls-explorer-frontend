@@ -43,7 +43,9 @@
         // GitHub account names
         "@(\\w|-)+",
         // Russian copy in agent skills (DevOps / Slack templates)
-        "[А-Яа-яЁё]+"
+        "[А-Яа-яЁё]+",
+        // Slack channel IDs (case-sensitive: bare pattern would match inside camelCase words)
+        "/\\bC[A-Z0-9]{8,}\\b/g"
     ],
     // words - list of words to be always considered correct
     "words": [
@@ -93,6 +95,7 @@
         "callvalue",
         "campnetwork",
         "CCIP",
+        "CICD",
         "CCPA",
         "cctx",
         "cctxs",
@@ -120,6 +123,7 @@
         "devnet",
         "didn",
         "doesn",
+        "doctl",
         "dotenv",
         "DRPC",
         "DTEND",
@@ -127,6 +131,7 @@
         "dweb",
         "dynamicwaas",
         "eamodio",
+        "elif",
         "Eigenda",
         "Emelyanov",
         "Enkrypt",
@@ -175,6 +180,7 @@
         "jumpi",
         "keccak",
         "Kiryl",
+        "kubeconfig",
         "labelable",
         "laquo",
         "LCIA",
@@ -224,6 +230,7 @@
         "oxlintrc",
         "paych",
         "peekers",
+        "pgbouncer",
         "pino",
         "pjpeg",
         "Pocock",
@@ -241,6 +248,10 @@
         "raquo",
         "rari",
         "Rarible",
+        "RAYLS",
+        "Rayls",
+        "RaylsLabs",
+        "raylsnetwork",
         "RBTC",
         "rdns",
         "rdparty",
@@ -258,6 +269,7 @@
         "rsbuild",
         "rubic",
         "Sastana",
+        "SARIF",
         "schnorr",
         "screencasts",
         "scure",
@@ -329,6 +341,7 @@
         "vitalik",
         "vite",
         "vitest",
+        "vulns",
         "wagmi",
         "warpcast",
         "watchlist",

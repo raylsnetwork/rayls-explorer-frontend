@@ -63,7 +63,7 @@ RUN set -a && \
 # ENV NEXT_TELEMETRY_DISABLED 1
 
 # Build app for production
-ENV NODE_OPTIONS="--max-old-space-size=8192"
+ENV NODE_OPTIONS="--max-old-space-size=6144"
 RUN pnpm routes:generate
 RUN pnpm run build
 
@@ -105,7 +105,15 @@ RUN pnpm exec tsc -p ./tools/dev-server/tsconfig.json
 # *****************************
 # Production image, copy all the files and run next
 FROM node:24.21.0-alpine AS runner
-RUN apk add --no-cache --upgrade bash curl jq unzip
+# - apk upgrade pulls patched base-image packages (musl & friends).
+# - Drop the bundled npm CLI: runtime uses node + shell scripts only, but
+#   /usr/local/lib/node_modules/npm ships its own vulnerable
+#   tar/glob/minimatch copies that we never execute.
+RUN apk upgrade --no-cache && \
+    apk add --no-cache --upgrade bash curl jq unzip && \
+    rm -rf /usr/local/lib/node_modules/npm \
+           /usr/local/bin/npm \
+           /usr/local/bin/npx
 
 ### APP
 WORKDIR /app

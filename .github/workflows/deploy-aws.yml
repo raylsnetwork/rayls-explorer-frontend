@@ -1,0 +1,345 @@
+# =============================================================================
+# Deploy (AWS) - Build to ECR + patch ArgoCD appset
+# =============================================================================
+# Builds the frontend image, pushes it to AWS ECR (OIDC, same pattern as
+# blockscout-backend/.github/workflows/build-and-push.yml), then patches the
+# frontend image tag in the target ArgoCD ApplicationSet inside
+# raylsnetwork/rayls-public-gitops via a PR that auto-merges (same pattern as
+# this repo's _update-helm.yml). ArgoCD auto-syncs once the PR merges.
+#
+# Target is chosen by two independent inputs:
+#   environment: testnet | mainnet
+#   channel:     stable  | canary   (which appset dir to patch)
+#
+# Same built tag is used for both the ECR push and the appset patch. Pass an
+# existing image_tag to skip the build and promote/rollback that tag instead.
+#
+# Appset files patched (dir = channel, filename = environment):
+#   stable + testnet -> apps/blockscout/appset-testnet.yaml
+#   stable + mainnet -> apps/blockscout/appset-mainnet.yaml
+#   canary + testnet -> apps/blockscout-canary/appset-testnet.yaml
+#   canary + mainnet -> apps/blockscout-canary/appset-mainnet.yaml
+#
+# Required org-level secret:
+#   ARGO_PR: GitHub PAT with repo access to raylsnetwork/rayls-public-gitops
+#             (push branches, open/merge PRs)
+#
+# Required GitHub environment variables (per environment-channel, e.g.
+# "testnet-canary", "mainnet-stable"):
+#   AWS_REGION:   e.g. us-east-2
+#   ECR_REGISTRY: e.g. <account-id>.dkr.ecr.<region>.amazonaws.com
+#   ROLE_ARN:     e.g. arn:aws:iam::<account-id>:role/rayls-public-ecr-push
+#   GITOPS_REPO:  e.g. raylsnetwork/rayls-public-gitops
+# =============================================================================
+
+name: Deploy (AWS)
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        type: choice
+        options: [testnet, mainnet]
+      channel:
+        description: "Target appset channel"
+        required: true
+        type: choice
+        options: [stable, canary]
+      image_tag:
+        description: "Existing ECR image tag to promote/rollback (leave empty to build a new image from this commit)"
+        required: false
+        type: string
+      gitops_branch:
+        description: "Branch of raylsnetwork/rayls-public-gitops to patch"
+        required: false
+        type: string
+        default: main
+
+env:
+  IMAGE_NAME: rayls-explorer-frontend
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Build - only runs when no existing image_tag was supplied
+  # ---------------------------------------------------------------------------
+  build:
+    name: 🐳 Build and push to ECR
+    if: inputs.image_tag == ''
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}-${{ inputs.channel }}
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}
+      ROLE_ARN: ${{ vars.ROLE_ARN }}
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compute image tag
+        id: meta
+        run: |
+          # Tag format: <UTC date>-<short sha>, e.g. 2026.04.29-3ebda45
+          echo "tag=$(date -u +%Y.%m.%d)-$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.tag }}
+          platforms: linux/amd64
+          cache-from: type=gha,scope=rayls-explorer-frontend-ecr
+          cache-to: type=gha,mode=max,scope=rayls-explorer-frontend-ecr
+
+      - name: Summary
+        run: |
+          echo "## 🐳 Build Complete" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Property | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|----------|-------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Image | \`${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Tag | \`${{ steps.meta.outputs.tag }}\` |" >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------
+  # Deploy - patch the target appset in the gitops repo
+  # ---------------------------------------------------------------------------
+  deploy:
+    name: 📦 Patch ArgoCD appset
+    needs: [build]
+    if: always() && (needs.build.result == 'success' || needs.build.result == 'skipped')
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}-${{ inputs.channel }}
+    env:
+      ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}
+      GITOPS_REPO: ${{ vars.GITOPS_REPO }}
+    steps:
+      - name: Resolve image tag
+        id: tag
+        env:
+          INPUT_TAG: ${{ inputs.image_tag }}
+          BUILT_TAG: ${{ needs.build.outputs.image_tag }}
+        run: |
+          TAG="${INPUT_TAG:-$BUILT_TAG}"
+
+          if [[ -z "$TAG" ]]; then
+            echo "❌ No image tag available (build skipped and no image_tag input given)."
+            exit 1
+          fi
+
+          # Validate tag format to prevent injection (alphanumeric, hyphens, dots, underscores)
+          if ! [[ "$TAG" =~ ^[a-zA-Z0-9_.-]+$ ]]; then
+            echo "❌ Invalid image tag format: $TAG"
+            exit 1
+          fi
+
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve target appset file
+        id: target
+        env:
+          CHANNEL: ${{ inputs.channel }}
+          ENVIRONMENT: ${{ inputs.environment }}
+        run: |
+          if [[ "$CHANNEL" == "canary" ]]; then
+            DIR="apps/blockscout-canary"
+          else
+            DIR="apps/blockscout"
+          fi
+
+          echo "file=${DIR}/appset-${ENVIRONMENT}.yaml" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout GitOps Repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.GITOPS_REPO }}
+          ref: ${{ inputs.gitops_branch }}
+          token: ${{ secrets.ARGO_PR }}
+          path: gitops
+
+      - name: Compute branch name
+        id: branch
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+          CHANNEL: ${{ inputs.channel }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          echo "name=deploy-${ENVIRONMENT}-${CHANNEL}-${TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Git and Branch
+        working-directory: gitops
+        env:
+          BRANCH: ${{ steps.branch.outputs.name }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git fetch origin
+
+          if git ls-remote --heads origin "$BRANCH" | grep -q "$BRANCH"; then
+            echo "📌 Branch $BRANCH already exists, checking it out..."
+            git checkout "$BRANCH"
+            git pull origin "$BRANCH" --rebase
+          else
+            echo "🆕 Creating new branch $BRANCH"
+            git checkout -b "$BRANCH"
+          fi
+
+      - name: Patch frontend image tag
+        working-directory: gitops
+        env:
+          FILE: ${{ steps.target.outputs.file }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          if [[ ! -f "$FILE" ]]; then
+            echo "❌ Appset file not found: $FILE"
+            exit 1
+          fi
+
+          echo "📝 Patching $FILE: frontend.image.tag = $TAG"
+
+          # Surgical patch: the frontend image tag lives inside an inline Helm
+          # values block scalar, so yq can't address it. Anchor on the unique
+          # rayls-explorer-frontend repository line and rewrite the tag on the
+          # line right below it — leaves the backend/pgbouncer/scVerifier tags
+          # untouched.
+          sed -i -E '/rayls-explorer-frontend/{n;s/(tag: *").*(")/\1'"$TAG"'\2/}' "$FILE"
+
+          echo "📋 Updated section:"
+          grep -A2 'rayls-explorer-frontend' "$FILE"
+
+      - name: Commit and Push
+        id: commit
+        working-directory: gitops
+        env:
+          BRANCH: ${{ steps.branch.outputs.name }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          CHANNEL: ${{ inputs.channel }}
+          TRIGGER_SHA: ${{ github.sha }}
+        run: |
+          git add .
+
+          if git diff --staged --quiet; then
+            echo "⚠️  No changes to commit — tag is already up to date"
+            echo "committed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git commit -m "chore(rayls-explorer-frontend): deploy $TAG to $ENVIRONMENT/$CHANNEL
+
+          Automated deploy from CI/CD pipeline.
+
+          - Environment: $ENVIRONMENT
+          - Channel: $CHANNEL
+          - Image: ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:$TAG
+          - Triggered by: ${{ github.repository }}@$TRIGGER_SHA"
+
+          git push origin "$BRANCH" --force-with-lease
+          echo "committed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Create or Update Pull Request
+        id: create-pr
+        if: steps.commit.outputs.committed == 'true'
+        working-directory: gitops
+        env:
+          GH_TOKEN: ${{ secrets.ARGO_PR }}
+          BRANCH: ${{ steps.branch.outputs.name }}
+          BASE: ${{ inputs.gitops_branch }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          CHANNEL: ${{ inputs.channel }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          FILE: ${{ steps.target.outputs.file }}
+        run: |
+          EXISTING_PR=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number' 2>/dev/null)
+
+          if [[ -n "$EXISTING_PR" ]]; then
+            echo "📝 PR #$EXISTING_PR already exists for branch $BRANCH"
+            PR_URL="https://github.com/${{ env.GITOPS_REPO }}/pull/$EXISTING_PR"
+            echo "pr_url=$PR_URL" >> "$GITHUB_OUTPUT"
+            echo "pr_number=$EXISTING_PR" >> "$GITHUB_OUTPUT"
+          else
+            echo "🆕 Creating new PR for branch $BRANCH"
+
+            PR_URL=$(gh pr create \
+              --title "chore(rayls-explorer-frontend): deploy $TAG to $ENVIRONMENT/$CHANNEL" \
+              --body "Automated Deploy (AWS) — Environment: $ENVIRONMENT, Channel: $CHANNEL, Image Tag: $TAG, Appset: $FILE" \
+              --base "$BASE" \
+              --head "$BRANCH")
+
+            echo "pr_url=$PR_URL" >> "$GITHUB_OUTPUT"
+            PR_NUMBER=$(echo "$PR_URL" | grep -oE '[0-9]+$')
+            echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
+          fi
+
+          echo "📎 PR: $PR_URL"
+
+      - name: Add Labels to PR
+        if: steps.commit.outputs.committed == 'true'
+        working-directory: gitops
+        env:
+          GH_TOKEN: ${{ secrets.ARGO_PR }}
+          PR_NUMBER: ${{ steps.create-pr.outputs.pr_number }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          CHANNEL: ${{ inputs.channel }}
+        run: |
+          gh pr edit "$PR_NUMBER" --add-label "automated,deploy-aws,$ENVIRONMENT,$CHANNEL" 2>/dev/null || echo "⚠️  Labels not added (they may not exist in the repository)"
+
+      - name: Auto-Merge PR
+        if: steps.commit.outputs.committed == 'true'
+        working-directory: gitops
+        env:
+          GH_TOKEN: ${{ secrets.ARGO_PR }}
+          PR_NUMBER: ${{ steps.create-pr.outputs.pr_number }}
+        run: |
+          echo "🔀 Auto-merging PR #$PR_NUMBER"
+          gh pr merge "$PR_NUMBER" --squash --auto --delete-branch
+
+      - name: Summary
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+          CHANNEL: ${{ inputs.channel }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          FILE: ${{ steps.target.outputs.file }}
+          COMMITTED: ${{ steps.commit.outputs.committed }}
+          PR_URL: ${{ steps.create-pr.outputs.pr_url }}
+        run: |
+          {
+            echo "## 📦 Deploy (AWS)"
+            echo ""
+            echo "| Property | Value |"
+            echo "|----------|-------|"
+            echo "| Environment | \`$ENVIRONMENT\` |"
+            echo "| Channel | \`$CHANNEL\` |"
+            echo "| Image | \`${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:$TAG\` |"
+            echo "| Appset file | \`$FILE\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ "$COMMITTED" == "true" ]]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "| PR | $PR_URL |" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "🔄 PR auto-merges, then ArgoCD will sync the deployment." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "ℹ️ Tag was already set — no PR opened." >> "$GITHUB_STEP_SUMMARY"
+          fi

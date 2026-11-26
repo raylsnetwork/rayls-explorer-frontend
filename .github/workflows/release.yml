@@ -1,99 +1,222 @@
+# =============================================================================
+# Release - Full CI/CD Pipeline
+# =============================================================================
+# Complete release pipeline: Build → Scan → Security Gate → Update Helm
+#
+# Triggers:
+#   - Push to main: Builds image + auto-deploys to TESTNET (via ArgoCD)
+#   - Manual: Builds image + auto-deploys to TESTNET (toggle with `deploy: false`)
+#
+# A single SHA-tagged image is produced and deployed to testnet. Promoting the
+# same image to MAINNET is a separate manual action via deploy.yml (which
+# requires the DEPLOY-TO-PROD confirmation).
+#
+# Pipeline:
+#   ┌─────────┐     ┌─────────┐     ┌───────────────┐     ┌──────────────┐
+#   │  Build  │ ──► │  Scan   │ ──► │ Security Gate │ ──► │ Update Helm  │
+#   └─────────┘     └─────────┘     └───────────────┘     └──────────────┘
+#
+# Security Gate (after scan):
+#   - No CRITICAL vulns              → passes automatically → deploy proceeds
+#   - CRITICAL vulns                 → gate fails → deploy is blocked
+#   - CRITICAL vulns + admin override → re-trigger manually with
+#                                       skip_security_gate: true
+#     The override actor and timestamp are permanently recorded in
+#     GitHub Actions workflow run history.
+#
+# ⚠️  MAINNET deploys are MANUAL ONLY via deploy.yml
+# =============================================================================
+
 name: Release
 
 on:
-    workflow_dispatch:
-    release:
-        types: [ released ]
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: "Deploy to TESTNET after build (uncheck to build only)"
+        required: false
+        default: true
+        type: boolean
+      skip_security_gate:
+        description: "Override security gate when CRITICAL vulnerabilities are found (admin only)"
+        required: false
+        default: false
+        type: boolean
+
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "public/**"
+      - "deploy/**"
+      - "tools/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "Dockerfile"
+      - "next.config.*"
+
+permissions:
+  contents: read
+  security-events: write
 
 jobs:
-    remove_prerelease_label:
-        name: Remove pre-release label from PRs and issues
-        runs-on: ubuntu-latest
-        permissions:
-            contents: read
-            issues: write
-            pull-requests: write
-        steps:
-            -   name: Checkout repo
-                uses: actions/checkout@v4
+  # ---------------------------------------------------------------------------
+  # Resolve should_deploy
+  # ---------------------------------------------------------------------------
+  # Push to main → always deploy. Manual dispatch → honor the `deploy` input
+  # (default: true). Mainnet promotions never run here — use deploy.yml.
+  # ---------------------------------------------------------------------------
+  setup:
+    name: 🔧 Setup
+    runs-on: ubuntu-latest
+    outputs:
+      should_deploy: ${{ steps.env.outputs.should_deploy }}
+    steps:
+      - name: Determine should_deploy
+        id: env
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "should_deploy=${{ inputs.deploy }}" >> $GITHUB_OUTPUT
+          else
+            echo "should_deploy=true" >> $GITHUB_OUTPUT
+          fi
 
-            -   name: Install pnpm
-                uses: pnpm/action-setup@v6
-                with:
-                    version: 12.4.1
-                    cache: true
+  # ---------------------------------------------------------------------------
+  # Build Docker Image (centralized workflow)
+  # ---------------------------------------------------------------------------
+  build:
+    name: 🐳 Build
+    needs: [setup]
+    uses: ./.github/workflows/_build.yml
+    with:
+      image_name: rayls-explorer-frontend
+      environment: dev
+      push: true
+    secrets: inherit
 
-            -   name: Setup node
-                uses: actions/setup-node@v4
-                with:
-                    node-version: 24.21.0
-                    cache: 'pnpm'
+  # ---------------------------------------------------------------------------
+  # Security Scan (local reusable workflow)
+  # ---------------------------------------------------------------------------
+  scan:
+    name: 🔒 Scan
+    needs: [setup, build]
+    uses: ./.github/workflows/_security-scan.yml
+    with:
+      image_ref: registry.digitalocean.com/rayls-public-chain-registry/rayls-explorer-frontend:${{ needs.build.outputs.image_tag }}
+    secrets: inherit
 
-            -   name: Install dependencies
-                run: pnpm install --frozen-lockfile
+  # ---------------------------------------------------------------------------
+  # Security Gate (inlined — continue-on-error not supported on reusable workflow calls)
+  # - No CRITICAL vulns           → ✅ green  → deploy proceeds
+  # - CRITICAL vulns, no override → ❌ red    → deploy blocked
+  # - CRITICAL vulns + override   → ⚠️ orange → deploy proceeds (admin audit trail preserved)
+  # ---------------------------------------------------------------------------
+  gate:
+    name: 🛡️ Security Gate
+    runs-on: ubuntu-latest
+    needs: [scan]
+    continue-on-error: ${{ inputs.skip_security_gate || false }}
+    steps:
+      - name: Verify admin permission
+        if: inputs.skip_security_gate == true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PERMISSION=$(gh api repos/${{ github.repository }}/collaborators/${{ github.actor }}/permission --jq '.role_name' 2>/dev/null || echo "none")
+          if [[ "$PERMISSION" != "admin" ]]; then
+            echo "❌ Only repository admins can override the security gate."
+            echo "Actor '${{ github.actor }}' has permission level: $PERMISSION"
+            exit 1
+          fi
+          echo "✅ Admin permission verified for ${{ github.actor }} (role: $PERMISSION)"
 
-            -   name: Remove label
-                run: pnpm release label "$TAG" --remove=pre-release
-                env:
-                    GH_TOKEN: ${{ github.token }}
-                    TAG: ${{ github.ref_name }}
+      - name: Evaluate
+        run: |
+          if [[ "${{ needs.scan.outputs.has_critical }}" == "true" ]]; then
+            if [[ "${{ inputs.skip_security_gate }}" == "true" ]]; then
+              echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+              echo "  ⚠️  SECURITY OVERRIDE — DEPLOY UNBLOCKED  ⚠️"
+              echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+              echo "  CRITICAL vulnerabilities are present in the image."
+              echo "  An admin has explicitly overridden the security gate."
+              echo ""
+              echo "  Override actor : ${{ github.actor }}"
+              echo "  Audit trail    : GitHub Actions → workflow run history"
+              echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+              exit 1
+            else
+              echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+              echo "  ❌  SECURITY GATE — DEPLOY BLOCKED  ❌"
+              echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+              echo "  CRITICAL vulnerabilities were found in the image."
+              echo "  To unblock: re-trigger this workflow manually with"
+              echo "  'skip_security_gate: true'."
+              echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+              exit 1
+            fi
+          else
+            echo "✅ No CRITICAL vulnerabilities found. Proceeding with deploy."
+          fi
 
-    label_released_issues:
-        name: Label released issues
-        uses: './.github/workflows/label-issues-in-release.yml'
-        with:
-            tag: ${{ github.ref_name }}
-            label_name: ${{ github.ref_name }}
-            label_description: Release ${{ github.ref_name }}
-        secrets: inherit
-        permissions:
-            contents: read
-            issues: write
-            pull-requests: write
+  # ---------------------------------------------------------------------------
+  # Update Helm Chart (GitOps) (centralized workflow)
+  # ArgoCD monitors the Helm chart repository and automatically deploys changes.
+  # ---------------------------------------------------------------------------
+  update-helm:
+    name: 📦 Update Helm Chart
+    needs: [setup, build, scan, gate]
+    if: >-
+      always() &&
+      needs.build.result == 'success' &&
+      (needs.gate.result == 'success' || (needs.gate.result == 'failure' && (inputs.skip_security_gate || false) == true)) &&
+      needs.setup.outputs.should_deploy == 'true'
+    uses: ./.github/workflows/_update-helm.yml
+    with:
+      app_name: rayls-explorer-frontend
+      environment: dev
+      image_tag: ${{ needs.build.outputs.image_tag }}
+      values_file: blockscout-testnet/values.yaml
+      image_tag_yaml_path: .frontend.image.tag
+    secrets: inherit
 
-    update_project_cards:
-        name: Update project tasks statuses
-        needs: label_released_issues
-        uses: './.github/workflows/update-project-cards.yml'
-        with:
-            project_name: ${{ vars.PROJECT_NAME }}
-            field_name: Status
-            field_value: Released
-            issues: ${{ needs.label_released_issues.outputs.issues }}
-        secrets: inherit
-        permissions:
-            issues: read
+  # ---------------------------------------------------------------------------
+  # Summary
+  # ---------------------------------------------------------------------------
+  summary:
+    name: 📋 Summary
+    runs-on: ubuntu-latest
+    needs: [setup, build, scan, gate, update-helm]
+    if: always()
+    steps:
+      - name: Pipeline Results
+        run: |
+          # Determine gate status
+          if [[ "${{ needs.gate.result }}" == "success" ]]; then
+            GATE_STATUS="✅ Passed (no critical vulns)"
+          elif [[ "${{ needs.gate.result }}" == "failure" && "${{ inputs.skip_security_gate }}" == "true" ]]; then
+            GATE_STATUS="⚠️ Override by ${{ github.actor }}"
+          elif [[ "${{ needs.gate.result }}" == "failure" ]]; then
+            GATE_STATUS="❌ Blocked — re-trigger with skip_security_gate: true to override"
+          else
+            GATE_STATUS="⏭️ Skipped"
+          fi
 
-    check_tag:
-        name: Check release tag
-        uses: './.github/workflows/check-tag.yml'
-        with:
-            tag: ${{ github.ref_name }}
-        permissions:
-            contents: read
-            issues: read
-            pull-requests: read
-
-    publish_image:
-        name: Publish Docker image
-        needs: check_tag
-        uses: './.github/workflows/publish-image.yml'
-        secrets: inherit
-        with:
-            platforms: linux/amd64,linux/arm64/v8
-            # NOTE: by default the image will be built with type=ref,event=tag; so we need to specify it here
-            tags: |
-                type=raw,value=latest
-        permissions:
-            contents: read
-            packages: write
-
-    publish_toolkit:
-        name: Publish toolkit package to NPM
-        uses: './.github/workflows/toolkit-npm-publisher.yml'
-        secrets: inherit
-        with:
-            version: ${{ github.ref_name }}
-        permissions:
-            contents: read
-            id-token: write
+          {
+            echo "## 📋 Release Pipeline"
+            echo ""
+            echo "| Stage | Status |"
+            echo "|-------|--------|"
+            echo "| Setup | ${{ needs.setup.result == 'success' && '✅' || '❌' }} |"
+            echo "| Build | ${{ needs.build.result == 'success' && '✅' || needs.build.result == 'skipped' && '⏭️' || '❌' }} |"
+            echo "| Scan | ${{ needs.scan.result == 'success' && '✅' || needs.scan.result == 'skipped' && '⏭️' || '❌' }} |"
+            echo "| Security Gate | $GATE_STATUS |"
+            echo "| Update Helm | ${{ needs.update-helm.result == 'success' && '✅' || needs.update-helm.result == 'skipped' && '⏭️' || needs.update-helm.result == 'cancelled' && '🚫' || '❌' }} |"
+            echo ""
+            echo "**Target:** \`testnet (blockscout-testnet/values.yaml)\`"
+            echo "**Image Tag:** \`${{ needs.build.outputs.image_tag }}\`"
+            echo ""
+            if [[ "${{ needs.update-helm.result }}" == "success" ]]; then
+              echo "🔄 **ArgoCD** will automatically detect and deploy the changes."
+            fi
+          } >> $GITHUB_STEP_SUMMARY

@@ -58,7 +58,7 @@ const HeroBanner = () => {
       return config.slices.home.heroBanner.text;
     }
 
-    return `${ config.chain.name } explorer`;
+    return `The ${ config.chain.name } Explorer`;
   })();
 
   return (

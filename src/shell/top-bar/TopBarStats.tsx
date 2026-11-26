@@ -12,15 +12,11 @@ import GetGasButton from 'src/features/get-gas-button/components/GetGasButton';
 
 import config from 'src/config';
 import dayjs from 'src/shared/date-and-time/dayjs';
-import useIsMobile from 'src/shared/hooks/useIsMobile';
-import TextSeparator from 'src/shared/texts/TextSeparator';
 
 import { Link } from 'src/toolkit/chakra/link';
 import { Skeleton } from 'src/toolkit/chakra/skeleton';
 
 const TopBarStats = () => {
-  const isMobile = useIsMobile();
-
   const { data, isPlaceholderData, isError, refetch, dataUpdatedAt } = useStatsQuery();
 
   React.useEffect(() => {
@@ -48,59 +44,30 @@ const TopBarStats = () => {
     return <div/>;
   }
 
-  const hasNativeCoinPrice = data?.coin_price && !config.chain.currency.isPriceHidden;
-  const hasSecondaryCoinPrice = data?.secondary_coin_price && config.chain.secondaryCoin.symbol && (hasNativeCoinPrice ? !isMobile : true);
   const gasPrices = discriminateDetailedPrices(data?.gas_prices);
-  const hasGasInfo = gasPrices !== undefined && config.features.gasTracker.isEnabled && !isMobile;
+  const hasGasInfo = gasPrices !== undefined && config.features.gasTracker.isEnabled;
 
   return (
-    <>
-      { Boolean(config.shell.topBar.chainMenu.items) && <TextSeparator/> }
-      <Flex
-        alignItems="center"
-        fontWeight={ 500 }
-      >
-        { hasNativeCoinPrice && (
-          <Flex columnGap={ 1 }>
-            <Skeleton loading={ isPlaceholderData }>
-              <chakra.span color="text.secondary">{ config.chain.currency.symbol } </chakra.span>
-              <span>${ Number(data.coin_price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 }) }</span>
+    <Flex
+      alignItems="center"
+      fontWeight={ 500 }
+    >
+      { hasGasInfo && (
+        <>
+          { data && (
+            <Skeleton loading={ isPlaceholderData } whiteSpace="pre-wrap">
+              <chakra.span color="text.secondary">Gas </chakra.span>
+              <GasInfoTooltip data={ data } dataUpdatedAt={ dataUpdatedAt } placement="bottom-start">
+                <Link>
+                  <GasPrice data={ gasPrices.average ?? null }/>
+                </Link>
+              </GasInfoTooltip>
             </Skeleton>
-            { data.coin_price_change_percentage !== null && !(isMobile && Boolean(config.shell.topBar.chainMenu.items)) && (
-              <Skeleton loading={ isPlaceholderData }>
-                <chakra.span color={ Number(data.coin_price_change_percentage) >= 0 ? 'green.500' : 'red.500' }>
-                  { Number(data.coin_price_change_percentage).toFixed(2) }%
-                </chakra.span>
-              </Skeleton>
-            ) }
-          </Flex>
-        ) }
-        { hasSecondaryCoinPrice && (
-          <Flex columnGap={ 1 } ml={ data?.coin_price ? 3 : 0 }>
-            <Skeleton loading={ isPlaceholderData }>
-              <chakra.span color="text.secondary">{ config.chain.secondaryCoin.symbol } </chakra.span>
-              <span>${ Number(data.secondary_coin_price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 }) }</span>
-            </Skeleton>
-          </Flex>
-        ) }
-        { (hasNativeCoinPrice || hasSecondaryCoinPrice) && hasGasInfo && <TextSeparator/> }
-        { hasGasInfo && (
-          <>
-            { data && (
-              <Skeleton loading={ isPlaceholderData } whiteSpace="pre-wrap">
-                <chakra.span color="text.secondary">Gas </chakra.span>
-                <GasInfoTooltip data={ data } dataUpdatedAt={ dataUpdatedAt } placement={ !data?.coin_price ? 'bottom-start' : undefined }>
-                  <Link>
-                    <GasPrice data={ gasPrices.average ?? null }/>
-                  </Link>
-                </GasInfoTooltip>
-              </Skeleton>
-            ) }
-            { !isPlaceholderData && <GetGasButton/> }
-          </>
-        ) }
-      </Flex>
-    </>
+          ) }
+          { !isPlaceholderData && <GetGasButton/> }
+        </>
+      ) }
+    </Flex>
   );
 };
 

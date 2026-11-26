@@ -1,0 +1,214 @@
+# =============================================================================
+# Reusable Workflow: Security History Scan (TruffleHog)
+# =============================================================================
+# Scans the full git history of the CALLING repository for leaked secrets,
+# including content deleted in later commits (still present in git objects).
+#
+# Unlike gitleaks (which protects new commits), TruffleHog looks backwards
+# at everything that ever existed in the repository.
+#
+# On findings:
+#   - Full table embedded in the job Summary (values redacted)
+#   - A GitHub Issue is automatically created in the calling repo with a
+#     remediation checklist (rotate → audit → remove from history)
+#
+# Usage (typically in a scheduled + manual workflow):
+#
+#   on:
+#     workflow_dispatch:
+#       inputs:
+#         scan_mode:
+#           type: choice
+#           options: [verified-only, all]
+#           default: verified-only
+#         since_commit:
+#           required: false
+#           type: string
+#     schedule:
+#       - cron: "0 8 * * 1"
+#
+#   jobs:
+#     scan:
+#       uses: ./.github/workflows/_security-history-scan.yml
+#       with:
+#         scan_mode: ${{ inputs.scan_mode || 'verified-only' }}
+#         since_commit: ${{ inputs.since_commit || '' }}
+#       permissions:
+#         contents: read
+#         issues: write
+# =============================================================================
+
+name: Security History Scan
+
+on:
+  workflow_call:
+    inputs:
+      scan_mode:
+        description: "verified-only (confirmed active secrets) | all (all pattern matches)"
+        type: string
+        default: "verified-only"
+      since_commit:
+        description: "Scan commits after this SHA (empty = full history)"
+        required: false
+        type: string
+    secrets:
+      SLACK_BOT_TOKEN:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  trufflehog:
+    name: 🔍 TruffleHog History Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      # -----------------------------------------------------------------------
+      # Checkout with full history — required to scan all commits
+      # -----------------------------------------------------------------------
+      - name: Checkout (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # -----------------------------------------------------------------------
+      # Install TruffleHog
+      # -----------------------------------------------------------------------
+      - name: Install TruffleHog
+        run: |
+          curl -sSfL \
+            https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh \
+            | sh -s -- -b /usr/local/bin
+          trufflehog --version
+
+      # -----------------------------------------------------------------------
+      # Resolve scan arguments
+      # -----------------------------------------------------------------------
+      - name: Resolve scan arguments
+        id: args
+        run: |
+          ARGS="--json --no-update"
+
+          if [[ "${{ inputs.scan_mode }}" != "all" ]]; then
+            ARGS="$ARGS --only-verified"
+            echo "mode=verified-only" >> $GITHUB_OUTPUT
+          else
+            echo "mode=all" >> $GITHUB_OUTPUT
+          fi
+
+          if [[ -n "${{ inputs.since_commit }}" ]]; then
+            ARGS="$ARGS --since-commit ${{ inputs.since_commit }}"
+            echo "scope=since ${{ inputs.since_commit }}" >> $GITHUB_OUTPUT
+          else
+            echo "scope=full history" >> $GITHUB_OUTPUT
+          fi
+
+          echo "extra=$ARGS" >> $GITHUB_OUTPUT
+
+      # -----------------------------------------------------------------------
+      # Run TruffleHog
+      # Output is NDJSON (one JSON object per line, one finding per line)
+      # -----------------------------------------------------------------------
+      - name: Run TruffleHog
+        id: scan
+        run: |
+          set +e
+          trufflehog git file://. \
+            ${{ steps.args.outputs.extra }} \
+            2>/dev/null \
+            | tee findings.ndjson
+          set -e
+
+          COUNT=$(grep -c . findings.ndjson 2>/dev/null || echo "0")
+          echo "findings_count=$COUNT" >> $GITHUB_OUTPUT
+          echo ""
+          echo "──────────────────────────────────"
+          echo "Findings: $COUNT"
+          echo "──────────────────────────────────"
+
+      # -----------------------------------------------------------------------
+      # Summary — always visible, values redacted by TruffleHog
+      # -----------------------------------------------------------------------
+      - name: Summary
+        if: always()
+        run: |
+          FINDINGS="${{ steps.scan.outputs.findings_count }}"
+          MODE="${{ steps.args.outputs.mode }}"
+          SCOPE="${{ steps.args.outputs.scope }}"
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+          {
+            if [[ "$FINDINGS" -gt 0 ]]; then
+              echo "## ❌ $FINDINGS Secret(s) Found in Git History"
+              echo ""
+              echo "> **Immediate action required.**"
+              echo "> Rotate every credential listed below and check for unauthorized use."
+              echo "> Secrets in git history are permanently exposed — even if deleted in a later commit."
+            else
+              echo "## ✅ No Secrets Found"
+            fi
+
+            echo ""
+            echo "| Property | Value |"
+            echo "|----------|-------|"
+            echo "| Repository | \`${{ github.repository }}\` |"
+            echo "| Scope | $SCOPE |"
+            echo "| Mode | $MODE |"
+            echo "| Findings | **$FINDINGS** |"
+            echo "| Run | [View]($RUN_URL) |"
+
+            if [[ "$FINDINGS" -gt 0 ]]; then
+              echo ""
+              echo "### Findings"
+              echo ""
+              echo "| # | Detector | File | Commit | Author | Date | Verified |"
+              echo "|---|----------|------|--------|--------|------|----------|"
+              jq -rs '
+                to_entries[] |
+                "| \(.key + 1) | `\(.value.DetectorName)` | `\(.value.SourceMetadata.Data.Git.file // "—")` | `\(.value.SourceMetadata.Data.Git.commit[:7])` | \(.value.SourceMetadata.Data.Git.email // "—") | \(.value.SourceMetadata.Data.Git.timestamp[:10] // "—") | \(if .value.Verified then "✅ Yes" else "❓ No" end) |"
+              ' findings.ndjson 2>/dev/null \
+              || echo "| — | Could not parse findings — check the raw workflow log | — | — | — | — | — |"
+
+              echo ""
+              echo "> ⚠️ Secret values are **redacted** in this output."
+            fi
+          } >> $GITHUB_STEP_SUMMARY
+
+      # -----------------------------------------------------------------------
+      # Notify Slack on findings
+      # Issues are disabled on this repo (it's a fork of Blockscout), so Slack
+      # is the active alert channel. The job summary still shows the table.
+      # -----------------------------------------------------------------------
+      - name: Notify Slack on findings
+        if: steps.scan.outputs.findings_count != '0'
+        continue-on-error: true
+        uses: slackapi/slack-github-action@91efab103c0de0a537f72a35f6b8cda0ee76bf0a # v2.1.1
+        with:
+          method: chat.postMessage
+          token: ${{ secrets.SLACK_BOT_TOKEN }}
+          payload: |
+            {
+              "channel": "C0AASHLNKQE",
+              "text": ":rotating_light: *TruffleHog detected ${{ steps.scan.outputs.findings_count }} secret(s)* in `${{ github.repository }}`",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": ":rotating_light: *Secret(s) detected in git history*\n\n*Repository:* `${{ github.repository }}`\n*Findings:* ${{ steps.scan.outputs.findings_count }}\n*Scan mode:* `${{ steps.args.outputs.mode }}`\n*Scope:* `${{ steps.args.outputs.scope }}`\n\n<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View workflow run>"
+                  }
+                }
+              ]
+            }
+
+      # -----------------------------------------------------------------------
+      # Fail the workflow when findings exist, so the red status is visible
+      # in the Actions tab and on branch protection alongside the Slack ping.
+      # -----------------------------------------------------------------------
+      - name: Fail on findings
+        if: steps.scan.outputs.findings_count != '0'
+        run: |
+          echo "❌ ${{ steps.scan.outputs.findings_count }} secret(s) detected in history."
+          echo "   See the job summary, rotate any exposed credentials, and rewrite the affected commits."
+          exit 1
