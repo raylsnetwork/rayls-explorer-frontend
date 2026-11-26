@@ -11,7 +11,7 @@
 #     security:
 #       uses: ./.github/workflows/_security-npm-audit.yml
 #       with:
-#         node_version: "22"   # optional, defaults to "22"
+#         node_version: "24.21.0"   # optional, defaults to "24.21.0"
 # =============================================================================
 
 name: pnpm Security Audit
@@ -23,7 +23,7 @@ on:
         description: "Node.js version to use"
         required: false
         type: string
-        default: "22"
+        default: "24.21.0"
 
 jobs:
   audit:
@@ -33,8 +33,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Node and pnpm versions must match the Dockerfile and package.json (engines, packageManager).
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
+        with:
+          version: 12.4.1
 
       - uses: actions/setup-node@v4
         with:
