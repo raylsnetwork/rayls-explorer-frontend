@@ -36,6 +36,9 @@ overrides:
   "vite-plugin-dts>brace-expansion": "2.0.2"
   "minimatch@10>brace-expansion": "5.0.9"
   protobufjs: "7.5.5"
+  # Critical advisories that block the Rayls CI audit gate; both lines match what upstream main resolves to.
+  handlebars: "^4.7.10" # eslint-plugin-boundaries and @boundaries/elements pin 4.7.9
+  shell-quote: "^1.11.0" # react-devtools-core (via react-native) resolves to 1.8.4
 
 # pnpm 11+: allowlisted dependency install scripts (required for native addons).
 # Replaces pnpm 10's onlyBuiltDependencies — same policy: only these two packages may run build scripts.
