@@ -4,8 +4,8 @@
 # Builds the frontend image, pushes it to AWS ECR (OIDC, same pattern as
 # blockscout-backend/.github/workflows/build-and-push.yml), then patches the
 # frontend image tag in the target ArgoCD ApplicationSet inside
-# raylsnetwork/rayls-public-gitops via a PR that auto-merges (same pattern as
-# this repo's _update-helm.yml). ArgoCD auto-syncs once the PR merges.
+# raylsnetwork/rayls-public-gitops via a PR that auto-merges. ArgoCD auto-syncs
+# once the PR merges.
 #
 # Target is chosen by two independent inputs:
 #   environment: testnet | mainnet
