@@ -1,0 +1,111 @@
+// SPDX-License-Identifier: LicenseRef-Blockscout
+
+import { upperFirst } from 'es-toolkit';
+import React from 'react';
+
+import type { TabItemRegular } from 'src/toolkit/components/AdaptiveTabs/types';
+
+import PageTitle from 'src/shell/page/title/PageTitle';
+
+import BlocksContent from 'src/slices/block/pages/index/BlocksContent';
+import BlocksTabSlot from 'src/slices/block/pages/index/BlocksTabSlot';
+import { BLOCK_ITEM } from 'src/slices/block/stubs/list';
+
+import Flashblocks from 'src/features/flashblocks/pages/index/Flashblocks';
+
+import config from 'src/config';
+import useIsMobile from 'src/shared/hooks/useIsMobile';
+import useApiPaginatedQuery from 'src/shared/pagination/useApiPaginatedQuery';
+import { generateListStub } from 'src/shared/pagination/utils';
+import getQueryParamString from 'src/shared/router/get-query-param-string';
+import { useRouter } from 'src/shared/router/useRouter';
+
+import RoutedTabs from 'src/toolkit/components/RoutedTabs/RoutedTabs';
+
+const flashblocksFeature = config.features.flashblocks;
+const hiddenViews = config.slices.block.hiddenViews;
+
+const TAB_LIST_PROPS = {
+  marginBottom: 0,
+  pt: 6,
+  pb: 6,
+  marginTop: -5,
+};
+
+const BlocksPageContent = () => {
+  const router = useRouter();
+  const isMobile = useIsMobile();
+  const tab = getQueryParamString(router.query.tab);
+
+  const isReorgsTab = !hiddenViews?.reorgs && tab === 'reorgs';
+  const isUnclesTab = !hiddenViews?.uncles && tab === 'uncles';
+  const isFlashblocksTab = flashblocksFeature.isEnabled && flashblocksFeature.tabIds.some((id) => id === tab);
+
+  const blocksQuery = useApiPaginatedQuery({
+    resourceName: 'core:blocks',
+    queryParams: { type: 'block' },
+    options: {
+      enabled: !isReorgsTab && !isUnclesTab && !isFlashblocksTab,
+      placeholderData: generateListStub<'core:blocks'>(BLOCK_ITEM, 50, { next_page_params: {
+        block_number: 8988686,
+        items_count: 50,
+      } }),
+    },
+  });
+  const reorgsQuery = useApiPaginatedQuery({
+    resourceName: 'core:blocks',
+    queryParams: { type: 'reorg' },
+    options: {
+      enabled: isReorgsTab,
+      placeholderData: generateListStub<'core:blocks'>(BLOCK_ITEM, 50, { next_page_params: {
+        block_number: 8988686,
+        items_count: 50,
+      } }),
+    },
+  });
+  const unclesQuery = useApiPaginatedQuery({
+    resourceName: 'core:blocks',
+    queryParams: { type: 'uncle' },
+    options: {
+      enabled: isUnclesTab,
+      placeholderData: generateListStub<'core:blocks'>(BLOCK_ITEM, 50, { next_page_params: {
+        block_number: 8988686,
+        items_count: 50,
+      } }),
+    },
+  });
+
+  const pagination = (() => {
+    if (isReorgsTab) {
+      return reorgsQuery.pagination;
+    }
+    if (isUnclesTab) {
+      return unclesQuery.pagination;
+    }
+    if (isFlashblocksTab) {
+      return null;
+    }
+    return blocksQuery.pagination;
+  })();
+
+  const tabs: Array<TabItemRegular> = [
+    { id: 'blocks', title: 'All', component: <BlocksContent type="block" query={ blocksQuery }/> },
+    flashblocksFeature.isEnabled && { id: flashblocksFeature.tabIds, title: upperFirst(flashblocksFeature.name) + 's', component: <Flashblocks/> },
+    !hiddenViews?.reorgs && { id: 'reorgs', title: 'Forked', component: <BlocksContent type="reorg" query={ reorgsQuery }/> },
+    !hiddenViews?.uncles && { id: 'uncles', title: 'Uncles', component: <BlocksContent type="uncle" query={ unclesQuery }/> },
+  ].filter(Boolean);
+
+  return (
+    <>
+      <PageTitle title="Blocks" withTextAd/>
+      <RoutedTabs
+        tabs={ tabs }
+        listProps={ isMobile ? undefined : TAB_LIST_PROPS }
+        rightSlot={ isMobile ? undefined : <BlocksTabSlot pagination={ pagination }/> }
+        stickyEnabled={ !isMobile && !isFlashblocksTab }
+      />
+    </>
+  );
+};
+
+export default BlocksPageContent;

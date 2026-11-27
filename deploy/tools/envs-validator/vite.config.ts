@@ -10,8 +10,8 @@ export default defineConfig({
       formats: [ 'es' ],
       fileName: (format, entryName) => `${ entryName }.js`,
     },
-    rollupOptions: {
-      external: [ 'node:worker_threads', 'node:url', 'node:path', 'node:fs' ],
+    rolldownOptions: {
+      external: [ 'node:worker_threads', 'node:url', 'node:path', 'node:fs', 'node:fs/promises' ],
       output: {
         dir: 'dist',
         entryFileNames: '[name].js',
@@ -22,12 +22,8 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      configs: resolve(__dirname, '../../../configs'),
-      lib: resolve(__dirname, '../../../lib'),
-      toolkit: resolve(__dirname, '../../../toolkit'),
-      types: resolve(__dirname, '../../../types'),
-      public: resolve(__dirname, '../../../public'),
+      src: resolve(__dirname, '../../../src'),
+      'public': resolve(__dirname, '../../../public'),
     },
-    preserveSymlinks: true,
   },
 });

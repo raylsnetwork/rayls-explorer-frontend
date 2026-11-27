@@ -23,16 +23,13 @@ on:
   pull_request:
     branches: [main]
     paths:
-      - "pages/**"
-      - "ui/**"
-      - "lib/**"
-      - "toolkit/**"
-      - "configs/**"
-      - "nextjs/**"
+      - "src/**"
       - "public/**"
+      - "deploy/**"
+      - "tools/**"
       - "package.json"
-      - "package-lock.json"
-      - "yarn.lock"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
       - "Dockerfile"
 
 jobs:
@@ -65,17 +62,29 @@ jobs:
     uses: ./.github/workflows/_security-npm-audit.yml
 
   # ---------------------------------------------------------------------------
-  # Test Docker Build (no push) (centralized workflow)
+  # Test Docker Build (no push)
+  # Same runner and platform as the production image built by deploy-aws.yml:
+  # the cluster runs arm64 only, so an amd64 build would not prove the image.
   # ---------------------------------------------------------------------------
   build:
     name: 🐳 Docker Build Test
     needs: [validate]
-    uses: ./.github/workflows/_build.yml
-    with:
-      image_name: rayls-explorer-frontend
-      environment: dev
-      push: false
-    secrets: inherit
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build (no push)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: false
+          platforms: linux/arm64
+          cache-from: type=gha,scope=rayls-explorer-frontend-ci-linux/arm64
+          cache-to: type=gha,mode=max,scope=rayls-explorer-frontend-ci-linux/arm64
 
   # ---------------------------------------------------------------------------
   # Summary

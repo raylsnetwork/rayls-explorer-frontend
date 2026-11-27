@@ -1,13 +1,11 @@
-import * as yup from 'yup';
-import { replaceQuotes } from 'configs/app/utils';
-import type { ApiDocsTabId } from 'types/views/apiDocs';
-import { API_DOCS_TABS } from 'types/views/apiDocs';
+// SPDX-License-Identifier: LicenseRef-Blockscout
 
-export const apiDocsSchema = yup
-  .object()
-  .shape({
-    NEXT_PUBLIC_API_DOCS_TABS: yup.array()
-      .transform(replaceQuotes)
-      .json()
-      .of(yup.string<ApiDocsTabId>().oneOf(API_DOCS_TABS)),
-  });
+import * as v from 'valibot';
+
+import { API_DOCS_TABS } from 'src/features/api-docs/types/config';
+
+import { envJson } from '../../utils';
+
+export const apiDocsSchema = v.object({
+  NEXT_PUBLIC_API_DOCS_TABS: v.optional(envJson(v.array(v.picklist(API_DOCS_TABS)))),
+});

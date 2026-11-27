@@ -1,73 +1,39 @@
 # *****************************
+# *** STAGE 0: Shared base ****
+# *****************************
+FROM node:24.21.0-alpine AS base
+# corepack prepare makes a single network request to the npm registry and has no
+# built-in retry. Transient registry failures (HTTP 429, timeout, DNS) are not
+# uncommon, so retry with a linear backoff.
+RUN set -eu; \
+    corepack enable; \
+    n=0; \
+    until corepack prepare pnpm@12.4.1 --activate; do \
+      n=$((n + 1)); \
+      if [ "$n" -ge 5 ]; then echo "corepack prepare failed after $n attempts" >&2; exit 1; fi; \
+      echo "corepack prepare attempt $n failed, retrying in $((n * 10))s..." >&2; \
+      sleep $((n * 10)); \
+    done
+
+# *****************************
 # *** STAGE 1: Dependencies ***
 # *****************************
-FROM node:22.14.0-alpine AS deps
+FROM base AS deps
 # Check https://github.com/nodejs/docker-node/tree/b4117f9333da4138b03a546ec926ef50a31506c3#nodealpine to understand why libc6-compat might be needed.
 RUN apk add --no-cache libc6-compat python3 make g++
 RUN ln -sf /usr/bin/python3 /usr/bin/python
 
-### APP
-# Install dependencies
+### Install all workspace dependencies in one place
 WORKDIR /app
-COPY package.json yarn.lock tsconfig.json ./
-COPY types ./types
-COPY lib ./lib
-COPY configs/app ./configs/app
-COPY toolkit/theme ./toolkit/theme
-COPY toolkit/utils ./toolkit/utils
-COPY toolkit/components/forms/validators/url.ts ./toolkit/components/forms/validators/url.ts
 RUN apk add git
-RUN yarn --frozen-lockfile --network-timeout 100000
-
-
-### FEATURE REPORTER
-# Install dependencies
-WORKDIR /feature-reporter
-COPY ./deploy/tools/feature-reporter/package.json ./deploy/tools/feature-reporter/yarn.lock ./
-RUN yarn --frozen-lockfile --network-timeout 100000
-
-
-### ENV VARIABLES CHECKER
-# Install dependencies
-WORKDIR /envs-validator
-COPY ./deploy/tools/envs-validator/package.json ./deploy/tools/envs-validator/yarn.lock ./
-RUN yarn --frozen-lockfile --network-timeout 100000
-
-### FAVICON GENERATOR
-# Install dependencies
-WORKDIR /favicon-generator
-COPY ./deploy/tools/favicon-generator/package.json ./deploy/tools/favicon-generator/yarn.lock ./
-RUN yarn --frozen-lockfile --network-timeout 100000
-
-### SITEMAP GENERATOR
-# Install dependencies
-WORKDIR /sitemap-generator
-COPY ./deploy/tools/sitemap-generator/package.json ./deploy/tools/sitemap-generator/yarn.lock ./
-RUN yarn --frozen-lockfile --network-timeout 100000
-
-### MULTICHAIN CONFIG GENERATOR
-# Install dependencies
-WORKDIR /multichain-config-generator
-COPY ./deploy/tools/multichain-config-generator/package.json ./deploy/tools/multichain-config-generator/yarn.lock ./
-RUN yarn --frozen-lockfile --network-timeout 100000
-
-### ESSENTIAL DAPPS CHAINS CONFIG GENERATOR
-# Install dependencies
-WORKDIR /essential-dapps-chains-config-generator
-COPY ./deploy/tools/essential-dapps-chains-config-generator/package.json ./
-RUN yarn --frozen-lockfile --network-timeout 100000
-
-### llms.txt GENERATOR
-# Install dependencies
-WORKDIR /llms-txt-generator
-COPY ./deploy/tools/llms-txt-generator/package.json ./deploy/tools/llms-txt-generator/yarn.lock ./
-RUN yarn --frozen-lockfile --network-timeout 100000
+COPY . .
+RUN pnpm install --frozen-lockfile
 
 
 # *****************************
 # ****** STAGE 2: Build *******
 # *****************************
-FROM node:22.14.0-alpine AS builder
+FROM base AS builder
 RUN apk add --no-cache --upgrade libc6-compat bash jq
 
 # pass build args to env variables
@@ -81,10 +47,9 @@ ENV NEXT_OPEN_TELEMETRY_ENABLED=$NEXT_OPEN_TELEMETRY_ENABLED
 ENV NODE_ENV production
 
 ### APP
-# Copy dependencies and source code
+# Copy dependencies and source code from deps stage
 WORKDIR /app
-COPY --from=deps /app/node_modules ./node_modules
-COPY . .
+COPY --from=deps /app ./
 
 # Build SVG sprite and generate .env.registry with ENVs list and save build args into .env file
 RUN set -a && \
@@ -99,54 +64,49 @@ RUN set -a && \
 
 # Build app for production
 ENV NODE_OPTIONS="--max-old-space-size=6144"
-RUN yarn build
+RUN pnpm routes:generate
+RUN pnpm run build
 
 
 ### FEATURE REPORTER
-# Copy dependencies and source code, then build
-COPY --from=deps /feature-reporter/node_modules ./deploy/tools/feature-reporter/node_modules
-RUN cd ./deploy/tools/feature-reporter && yarn compile_config
-RUN cd ./deploy/tools/feature-reporter && yarn build
+RUN cd ./deploy/tools/feature-reporter && pnpm run build
 
+
+### ASSETS DOWNLOADER
+RUN cd ./deploy/tools/assets-downloader && pnpm run build
 
 ### ENV VARIABLES CHECKER
-# Copy dependencies and source code, then build
-COPY --from=deps /envs-validator/node_modules ./deploy/tools/envs-validator/node_modules
-RUN cd ./deploy/tools/envs-validator && yarn build
+RUN cd ./deploy/tools/envs-validator && pnpm run build
 
 
 ### FAVICON GENERATOR
-# Copy dependencies and source code
-COPY --from=deps /favicon-generator/node_modules ./deploy/tools/favicon-generator/node_modules
-
+# Portable bundle for the runtime image (self-contained node_modules)
+RUN pnpm --filter favicon-generator deploy --prod /app/favicon-generator-bundle
 
 ### SITEMAP GENERATOR
-# Copy dependencies and source code
-COPY --from=deps /sitemap-generator/node_modules ./deploy/tools/sitemap-generator/node_modules
+RUN pnpm --filter sitemap-generator deploy --prod /app/sitemap-generator-bundle
 
 ### MULTICHAIN CONFIG GENERATOR
-# Copy dependencies and source code, then build
-COPY --from=deps /multichain-config-generator/node_modules ./deploy/tools/multichain-config-generator/node_modules
-RUN cd ./deploy/tools/multichain-config-generator && yarn build
+RUN cd ./deploy/tools/multichain-config-generator && pnpm run build
 
 ### ESSENTIAL DAPPS CHAINS CONFIG GENERATOR
-# Copy dependencies and source code, then build
-COPY --from=deps /essential-dapps-chains-config-generator/node_modules ./deploy/tools/essential-dapps-chains-config-generator/node_modules
-RUN cd ./deploy/tools/essential-dapps-chains-config-generator && yarn build
+RUN cd ./deploy/tools/essential-dapps-chains-config-generator && pnpm run build
 
 ### llms.txt GENERATOR
-# Copy dependencies and source code, then build
-COPY --from=deps /llms-txt-generator/node_modules ./deploy/tools/llms-txt-generator/node_modules
-RUN cd ./deploy/tools/llms-txt-generator && yarn build
+RUN cd ./deploy/tools/llms-txt-generator && pnpm run build
+
+
+### DEV-SERVER ENV FETCHER
+RUN pnpm exec tsc -p ./tools/dev-server/tsconfig.json
 
 
 # *****************************
 # ******* STAGE 3: Run ********
 # *****************************
 # Production image, copy all the files and run next
-FROM node:22.14.0-alpine AS runner
-# - apk upgrade pulls patched musl-utils (CVE-2026-40200) and any other base fixes.
-# - Drop the bundled npm CLI: runtime uses node + yarn only, but
+FROM node:24.21.0-alpine AS runner
+# - apk upgrade pulls patched base-image packages (musl & friends).
+# - Drop the bundled npm CLI: runtime uses node + shell scripts only, but
 #   /usr/local/lib/node_modules/npm ships its own vulnerable
 #   tar/glob/minimatch copies that we never execute.
 RUN apk upgrade --no-cache && \
@@ -173,8 +133,9 @@ COPY --from=builder /app/public ./public
 COPY --from=builder /app/package.json ./package.json
 
 # Copy tools
+COPY --from=builder /app/deploy/tools/assets-downloader/dist/index.js ./assets-downloader/index.js
 COPY --from=builder /app/deploy/tools/envs-validator/dist/index.js ./envs-validator/index.js
-COPY --from=builder /app/deploy/tools/feature-reporter/index.js ./feature-reporter.js
+COPY --from=builder /app/deploy/tools/feature-reporter/dist/index.js ./feature-reporter.js
 COPY --from=builder /app/deploy/tools/multichain-config-generator/dist ./deploy/tools/multichain-config-generator/dist
 COPY --from=builder /app/deploy/tools/llms-txt-generator/dist ./deploy/tools/llms-txt-generator/dist
 COPY --from=builder /app/deploy/tools/essential-dapps-chains-config-generator/dist ./deploy/tools/essential-dapps-chains-config-generator/dist
@@ -188,24 +149,29 @@ COPY --chmod=755 ./deploy/scripts/make_envs_script.sh .
 ## Assets downloader
 COPY --chmod=755 ./deploy/scripts/download_assets.sh .
 ## OG image generator
-COPY ./deploy/scripts/og_image_generator.js .
+COPY ./deploy/tools/og-image-generator/index.js ./deploy/tools/og-image-generator/index.js
+## Pro API support flag
+COPY --chmod=755 ./deploy/scripts/export_pro_api_flag.sh .
 ## Favicon generator
 COPY --chmod=755 ./deploy/scripts/favicon_generator.sh .
-COPY --from=builder /app/deploy/tools/favicon-generator ./deploy/tools/favicon-generator
+COPY --from=builder /app/favicon-generator-bundle ./deploy/tools/favicon-generator
 RUN ["chmod", "-R", "777", "./deploy/tools/favicon-generator"]
 RUN ["chmod", "-R", "777", "./public"]
 ## Sitemap generator
 COPY --chmod=755 ./deploy/scripts/sitemap_generator.sh .
-COPY --from=builder /app/deploy/tools/sitemap-generator ./deploy/tools/sitemap-generator
+COPY --from=builder /app/sitemap-generator-bundle ./deploy/tools/sitemap-generator
 
 # Copy ENVs files
 COPY --from=builder /app/.env.registry .
 COPY --from=builder /app/.env .
 
-# Copy ENVs presets
-ARG ENVS_PRESET
-ENV ENVS_PRESET=$ENVS_PRESET
-COPY ./configs/envs ./configs/envs
+# Dev-server env fetcher (compiled script + registry/rules data + committed overrides).
+# The image is preset-agnostic: ENVS_PRESET is supplied at runtime (k8s env), and at startup
+# the entrypoint runs fetch.js to pull that instance's public config over HTTP.
+COPY --from=builder /app/tools/dev-server/fetch.js ./tools/dev-server/fetch.js
+COPY ./tools/dev-server/registry.json ./tools/dev-server/registry.json
+COPY ./tools/dev-server/envs-rules.json ./tools/dev-server/envs-rules.json
+COPY ./.env.extra ./.env.extra
 
 # Automatically leverage output traces to reduce image size
 # https://nextjs.org/docs/advanced-features/output-file-tracing

@@ -1,0 +1,128 @@
+// SPDX-License-Identifier: LicenseRef-Blockscout
+
+import { HStack } from '@chakra-ui/react';
+import React from 'react';
+
+import type { TokenType } from 'src/slices/token/types/api';
+
+import ActionBar from 'src/shell/page/action-bar/ActionBar';
+
+import TokenTransfersTable from 'src/slices/token-transfer/components/table/TokenTransfersTable';
+import TokenTransferFilter from 'src/slices/token-transfer/components/TokenTransferFilter';
+import type { TokenTransferColumnsState } from 'src/slices/token-transfer/hooks/useTokenTransferColumns';
+
+import AddressAdvancedFilterLink from 'src/features/advanced-filter/components/AddressAdvancedFilterLink';
+import CsvExport from 'src/features/csv-export/components/CsvExport';
+import { useMultichainContext } from 'src/features/multichain/context';
+
+import useIsMobile from 'src/shared/hooks/useIsMobile';
+import ColumnsButton from 'src/shared/lists/columns/ColumnsButton';
+import DataList from 'src/shared/lists/DataList';
+import Pagination from 'src/shared/pagination/Pagination';
+import type { ApiPaginatedQueryResult } from 'src/shared/pagination/useApiPaginatedQuery';
+
+import type { Filters } from './useAddressTokenTransfersQuery';
+import useAddressTokenTransfersSocket from './useAddressTokenTransfersSocket';
+
+interface Props {
+  query: ApiPaginatedQueryResult<'core:address_token_transfers'>;
+  filters: Filters;
+  addressHash: string;
+  onTypeFilterChange: (type: Array<TokenType>) => void;
+  onAddressFilterChange: (filter: string) => void;
+  columnsState: TokenTransferColumnsState;
+  // for tests only
+  overloadCount?: number;
+}
+
+const AddressTokenTransfersLocal = ({ query, filters, addressHash, onTypeFilterChange, onAddressFilterChange, columnsState, overloadCount }: Props) => {
+  const { isError, isInitialLoading, isTransitioning, data, pagination } = query;
+  const isMobile = useIsMobile();
+  const multichainContext = useMultichainContext();
+
+  const { showSocketAlert, newItemsCount } = useAddressTokenTransfersSocket({
+    filters,
+    queryFilters: query.filters,
+    addressHash,
+    data,
+    overloadCount,
+    enabled: pagination.page === 1,
+  });
+
+  const numActiveFilters = (filters.type?.length || 0) + (filters.filter ? 1 : 0);
+
+  const content = data?.items ? (
+    <TokenTransfersTable
+      columns={ columnsState.columns }
+      items={ data.items }
+      baseAddress={ addressHash }
+      enableTimeIncrement
+      showSocketInfo={ pagination.page === 1 }
+      showSocketErrorAlert={ showSocketAlert }
+      socketInfoNum={ newItemsCount }
+      isLoading={ isInitialLoading }
+      resetKey={ query.queryHash }
+    />
+  ) : null;
+
+  const actionBar = isMobile ? (
+    <ActionBar>
+      <HStack gap={ 2 }>
+        <TokenTransferFilter
+          defaultTypeFilters={ filters.type }
+          onTypeFilterChange={ onTypeFilterChange }
+          appliedFiltersNum={ numActiveFilters }
+          withAddressFilter
+          onAddressFilterChange={ onAddressFilterChange }
+          defaultAddressFilter={ filters.filter }
+          isLoading={ isInitialLoading }
+          chainConfig={ multichainContext?.chain?.app_config }
+        />
+        <ColumnsButton
+          tableColumns={ columnsState.selectableColumns }
+          columns={ columnsState.checkedColumns }
+          onChange={ columnsState.onColumnsChange }
+          onOrderChange={ columnsState.onColumnsReorder }
+          selected={ columnsState.isCustomized }
+          onReset={ columnsState.onColumnsReset }
+          isLoading={ isInitialLoading }
+        />
+        <CsvExport
+          type="address_token_transfers"
+          resourceName="core:address_csv_export_token_transfers"
+          pathParams={{ hash: addressHash }}
+          queryParams={ filters.filter ? {
+            filter_type: 'address',
+            filter_value: filters.filter,
+          } : undefined }
+          loadingInitial={ isInitialLoading }
+        />
+        <AddressAdvancedFilterLink
+          isLoading={ isInitialLoading }
+          address={ addressHash }
+          typeFilter={ filters.type }
+          directionFilter={ filters.filter }
+        />
+      </HStack>
+      <Pagination ml="auto" { ...pagination }/>
+    </ActionBar>
+  ) : null;
+
+  return (
+    <DataList
+      isError={ isError }
+      itemsNum={ data?.items?.length }
+      emptyText="There are no token transfers."
+      hasActiveFilters={ Boolean(numActiveFilters) }
+      isTransitioning={ isTransitioning }
+      emptyStateProps={{
+        term: 'token transfer',
+      }}
+      actionBar={ actionBar }
+    >
+      { content }
+    </DataList>
+  );
+};
+
+export default React.memo(AddressTokenTransfersLocal);

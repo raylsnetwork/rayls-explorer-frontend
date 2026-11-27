@@ -3,6 +3,7 @@
 # =============================================================================
 # Validates a Node.js project builds successfully.
 # Package manager is auto-detected from the lock file:
+#   - pnpm-lock.yaml present    → pnpm install --frozen-lockfile / pnpm run build
 #   - yarn.lock present         → yarn --frozen-lockfile / yarn build
 #   - package-lock.json present → npm ci / npm run build (default)
 #
@@ -11,7 +12,7 @@
 #     validate:
 #       uses: ./.github/workflows/_node-validate.yml
 #       with:
-#         node_version: "22"      # optional, defaults to "22"
+#         node_version: "24.21.0" # optional, defaults to "24.21.0"
 #         output_dir: ".next"     # optional, defaults to "dist"
 # =============================================================================
 
@@ -24,7 +25,7 @@ on:
         description: "Node.js version to use"
         required: false
         type: string
-        default: "22"
+        default: "24.21.0"
       output_dir:
         description: "Build output directory to verify (e.g. dist, .next)"
         required: false
@@ -42,13 +43,24 @@ jobs:
       - name: Detect package manager
         id: pm
         run: |
-          if [[ -f "yarn.lock" ]]; then
+          if [[ -f "pnpm-lock.yaml" ]]; then
+            echo "manager=pnpm" >> $GITHUB_OUTPUT
+            echo "cache=pnpm" >> $GITHUB_OUTPUT
+          elif [[ -f "yarn.lock" ]]; then
             echo "manager=yarn" >> $GITHUB_OUTPUT
             echo "cache=yarn" >> $GITHUB_OUTPUT
           else
             echo "manager=npm" >> $GITHUB_OUTPUT
             echo "cache=npm" >> $GITHUB_OUTPUT
           fi
+
+      # Node and pnpm versions must match the Dockerfile and package.json (engines, packageManager).
+      - name: Install pnpm
+        if: steps.pm.outputs.manager == 'pnpm'
+        uses: pnpm/action-setup@v6
+        with:
+          version: 12.4.1
+          cache: true
 
       - uses: actions/setup-node@v4
         with:
@@ -57,7 +69,9 @@ jobs:
 
       - name: Install dependencies
         run: |
-          if [[ "${{ steps.pm.outputs.manager }}" == "yarn" ]]; then
+          if [[ "${{ steps.pm.outputs.manager }}" == "pnpm" ]]; then
+            pnpm install --frozen-lockfile
+          elif [[ "${{ steps.pm.outputs.manager }}" == "yarn" ]]; then
             yarn --frozen-lockfile
           else
             npm ci
@@ -65,7 +79,9 @@ jobs:
 
       - name: Build
         run: |
-          if [[ "${{ steps.pm.outputs.manager }}" == "yarn" ]]; then
+          if [[ "${{ steps.pm.outputs.manager }}" == "pnpm" ]]; then
+            pnpm run build
+          elif [[ "${{ steps.pm.outputs.manager }}" == "yarn" ]]; then
             yarn build
           else
             npm run build

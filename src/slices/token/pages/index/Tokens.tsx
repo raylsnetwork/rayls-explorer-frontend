@@ -1,0 +1,263 @@
+// SPDX-License-Identifier: LicenseRef-Blockscout
+
+import { Box, HStack } from '@chakra-ui/react';
+import React from 'react';
+
+import type { TokenType } from 'src/slices/token/types/api';
+import type { TabItemRegular } from 'src/toolkit/components/AdaptiveTabs/types';
+
+import ActionBar, { ACTION_BAR_HEIGHT_DESKTOP } from 'src/shell/page/action-bar/ActionBar';
+import PageTitle from 'src/shell/page/title/PageTitle';
+
+import TokenTypeFilter from 'src/slices/token/components/TokenTypeFilter';
+import useTokensQuery from 'src/slices/token/hooks/useTokensQuery';
+import TokensList from 'src/slices/token/pages/index/TokensList';
+import { TOKENS_SORT_COLLECTION } from 'src/slices/token/utils/list-utils';
+
+import TokensBridgedChainsFilter from 'src/features/bridged-tokens/components/TokensBridgedChainsFilter';
+import useBridgedTokensQuery from 'src/features/bridged-tokens/hooks/useBridgedTokensQuery';
+import useBridgedTokensQueryCrossChain from 'src/features/cross-chain-txs/hooks/useBridgedTokensQuery';
+import BridgedTokensIndex from 'src/features/cross-chain-txs/pages/bridged-tokens/BridgedTokensIndex';
+import { BRIDGED_TOKENS_SORT_COLLECTION } from 'src/features/cross-chain-txs/utils/bridged-tokens-sort';
+
+import config from 'src/config';
+import PopoverFilter from 'src/shared/filters/PopoverFilter';
+import useIsMobile from 'src/shared/hooks/useIsMobile';
+import Pagination from 'src/shared/pagination/Pagination';
+import getQueryParamString from 'src/shared/router/get-query-param-string';
+import { useRouter } from 'src/shared/router/useRouter';
+import Sort from 'src/shared/sort/Sort';
+
+import { FilterInput } from 'src/toolkit/components/filters/FilterInput';
+import RoutedTabs from 'src/toolkit/components/RoutedTabs/RoutedTabs';
+
+const bridgedTokensFeature = config.features.bridgedTokens;
+const crossChainTxsFeature = config.features.crossChainTxs;
+
+const Tokens = () => {
+  const router = useRouter();
+  const isMobile = useIsMobile();
+
+  const tab = getQueryParamString(router.query.tab);
+
+  const allTokensQuery = useTokensQuery({
+    enabled: tab === 'all' || !tab,
+  });
+
+  const bridgedTokensQuery = useBridgedTokensQuery({
+    enabled: tab === 'bridged' && bridgedTokensFeature.isEnabled,
+  });
+
+  const bridgedTokensQueryCrossChain = useBridgedTokensQueryCrossChain({
+    enabled: tab === 'bridged' && crossChainTxsFeature.isEnabled,
+  });
+
+  const pagination = (() => {
+    if (tab === 'bridged') {
+      if (crossChainTxsFeature.isEnabled) {
+        return bridgedTokensQueryCrossChain.query.pagination;
+      }
+      return bridgedTokensQuery.query.pagination;
+    }
+    return allTokensQuery.query.pagination;
+  })();
+
+  const filter = (() => {
+    if (tab === 'bridged') {
+      if (crossChainTxsFeature.isEnabled) {
+        return null;
+      }
+
+      return (
+        <PopoverFilter contentProps={{ maxW: '350px' }} appliedFiltersNum={ bridgedTokensQuery.bridgeChains?.length }>
+          <TokensBridgedChainsFilter onChange={ bridgedTokensQuery.onBridgeChainsChange } defaultValue={ bridgedTokensQuery.bridgeChains }/>
+        </PopoverFilter>
+      );
+    }
+
+    return (
+      <PopoverFilter contentProps={{ w: '200px' }} appliedFiltersNum={ allTokensQuery.tokenTypes?.length }>
+        <TokenTypeFilter<TokenType> onChange={ allTokensQuery.onTokenTypesChange } defaultValue={ allTokensQuery.tokenTypes } category="all"/>
+      </PopoverFilter>
+    );
+  })();
+
+  const searchInput = (() => {
+    if (tab === 'bridged') {
+      if (crossChainTxsFeature.isEnabled) {
+        return (
+          <FilterInput
+            key="bridged-search-input"
+            w={{ base: '100%', lg: '360px' }}
+            size="sm"
+            onChange={ bridgedTokensQueryCrossChain.onSearchTermChange }
+            placeholder="Token name or symbol"
+            initialValue={ bridgedTokensQueryCrossChain.searchTerm }
+          />
+        );
+      }
+
+      return (
+        <FilterInput
+          key="bridged-search-input"
+          w={{ base: '100%', lg: '360px' }}
+          size="sm"
+          onChange={ bridgedTokensQuery.onSearchTermChange }
+          placeholder="Token name or symbol"
+          initialValue={ bridgedTokensQuery.searchTerm }
+        />
+      );
+    }
+
+    return (
+      <FilterInput
+        key="all-search-input"
+        w={{ base: '100%', lg: '360px' }}
+        size="sm"
+        onChange={ allTokensQuery.onSearchTermChange }
+        placeholder="Token name, address or symbol"
+        initialValue={ allTokensQuery.searchTerm }
+      />
+    );
+  })();
+
+  const sortButton = (() => {
+    if (!isMobile) {
+      return null;
+    }
+
+    if (tab === 'bridged') {
+      if (crossChainTxsFeature.isEnabled) {
+        return (
+          <Sort
+            name="bridged_tokens_sorting"
+            defaultValue={ [ bridgedTokensQueryCrossChain.sort ] }
+            collection={ BRIDGED_TOKENS_SORT_COLLECTION }
+            onValueChange={ bridgedTokensQueryCrossChain.onSortChange }
+          />
+        );
+      }
+
+      return (
+        <Sort
+          name="bridged_tokens_sorting"
+          defaultValue={ [ bridgedTokensQuery.sort ] }
+          collection={ TOKENS_SORT_COLLECTION }
+          onValueChange={ bridgedTokensQuery.onSortChange }
+        />
+      );
+    }
+
+    return (
+      <Sort
+        name="tokens_sorting"
+        defaultValue={ [ allTokensQuery.sort ] }
+        collection={ TOKENS_SORT_COLLECTION }
+        onValueChange={ allTokensQuery.onSortChange }
+      />
+    );
+  })();
+
+  const actionBar = (() => {
+    if (isMobile) {
+      return (
+        <>
+          <HStack gap={ 3 } mb={ pagination.isVisible ? 0 : 6 }>
+            { filter }
+            { sortButton }
+            { searchInput }
+          </HStack>
+          { pagination.isVisible && (
+            <ActionBar mt={ 0 }>
+              <Pagination { ...pagination } ml="auto"/>
+            </ActionBar>
+          ) }
+        </>
+      );
+    }
+
+    return (
+      <ActionBar>
+        <HStack gap={ 3 }>
+          { filter }
+          { searchInput }
+        </HStack>
+        <Pagination { ...pagination } ml="auto"/>
+      </ActionBar>
+    );
+  })();
+
+  const description = (() => {
+    if (!bridgedTokensFeature.isEnabled) {
+      return null;
+    }
+
+    const bridgesListText = bridgedTokensFeature.bridges.map((item, index, array) => {
+      return item.title + (index < array.length - 2 ? ', ' : '') + (index === array.length - 2 ? ' and ' : '');
+    });
+
+    return (
+      <Box fontSize="sm" mb={ 6 } whiteSpace="pre-wrap" flexWrap="wrap">
+        List of the tokens bridged through { bridgesListText } extensions
+      </Box>
+    );
+  })();
+
+  const tabs: Array<TabItemRegular> = [
+    {
+      id: 'all',
+      title: 'All',
+      component: (
+        <TokensList
+          query={ allTokensQuery.query }
+          sort={ allTokensQuery.sort }
+          onSortChange={ allTokensQuery.onSortChange }
+          actionBar={ actionBar }
+          hasActiveFilters={ Boolean(allTokensQuery.searchTerm || allTokensQuery.tokenTypes) }
+        />
+      ),
+    },
+    bridgedTokensFeature.isEnabled && !crossChainTxsFeature.isEnabled ? {
+      id: 'bridged',
+      title: 'Bridged',
+      component: (
+        <>
+          { description }
+          <TokensList
+            query={ bridgedTokensQuery.query }
+            sort={ bridgedTokensQuery.sort }
+            onSortChange={ bridgedTokensQuery.onSortChange }
+            actionBar={ actionBar }
+            hasActiveFilters={ Boolean(bridgedTokensQuery.searchTerm || bridgedTokensQuery.bridgeChains) }
+          />
+        </>
+      ),
+    } : undefined,
+    crossChainTxsFeature.isEnabled ? {
+      id: 'bridged',
+      title: 'Bridged',
+      component: (
+        <BridgedTokensIndex
+          query={ bridgedTokensQueryCrossChain.query }
+          sort={ bridgedTokensQueryCrossChain.sort }
+          onSortChange={ bridgedTokensQueryCrossChain.onSortChange }
+          actionBar={ actionBar }
+          hasActiveFilters={ Boolean(bridgedTokensQueryCrossChain.searchTerm) }
+          tableTop={ ACTION_BAR_HEIGHT_DESKTOP }
+        />
+      ),
+    } : undefined,
+  ].filter(Boolean);
+
+  return (
+    <>
+      <PageTitle
+        title="Tokens"
+        withTextAd
+      />
+      <RoutedTabs tabs={ tabs }/>
+    </>
+  );
+};
+
+export default Tokens;

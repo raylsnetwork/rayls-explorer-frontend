@@ -1,0 +1,35 @@
+// SPDX-License-Identifier: LicenseRef-Blockscout
+
+import React, { createContext, useContext } from 'react';
+
+import type { Props as PageProps } from 'src/server/getServerSideProps/handlers';
+
+import type { Route } from 'src/shared/router/routes';
+
+type Props = {
+  children: React.ReactNode;
+  pageProps: PageProps;
+};
+
+const AppContext = createContext<PageProps>({
+  cookies: '',
+  referrer: '',
+  query: {},
+  adBannerProvider: null,
+  apiData: null,
+  uuid: '',
+  cspNonce: null,
+  onionDomain: null,
+});
+
+export function AppContextProvider({ children, pageProps }: Props) {
+  return (
+    <AppContext.Provider value={ pageProps }>
+      { children }
+    </AppContext.Provider>
+  );
+}
+
+export function useAppContext<Pathname extends Route['pathname'] = never>() {
+  return useContext<PageProps<Pathname>>(AppContext);
+}

@@ -1,0 +1,55 @@
+// SPDX-License-Identifier: LicenseRef-Blockscout
+
+import { chakra } from '@chakra-ui/react';
+import React from 'react';
+
+import config from 'src/config';
+import { route } from 'src/shared/router/routes';
+import SpriteIcon from 'src/sprite/SpriteIcon';
+
+import { useColorModeValue } from 'src/toolkit/chakra/color-mode';
+import { Image } from 'src/toolkit/chakra/image';
+
+import { INVERT_FILTER } from './consts';
+
+const IconFallback = () => {
+  return (
+    <SpriteIcon
+      name="networks/icon-placeholder"
+      w="60px"
+      h="60px"
+      color={{ base: 'blue.600', _dark: 'white' }}
+      aria-label="Network icon placeholder"
+    />
+  );
+};
+
+type Props = {
+  className?: string;
+};
+
+const NetworkIcon = ({ className }: Props) => {
+
+  const iconSrc = useColorModeValue(config.chain.icon['default'], config.chain.icon.dark || config.chain.icon['default']);
+
+  return (
+    <chakra.a
+      className={ className }
+      href={ route({ pathname: '/' }) }
+      aria-label="Link to main page"
+    >
+      <Image
+        w="60px"
+        h="60px"
+        src={ iconSrc }
+        alt={ `${ config.chain.name } network icon` }
+        fallback={ <IconFallback/> }
+        filter={{ _dark: !config.chain.icon.dark ? INVERT_FILTER : undefined }}
+        objectFit="contain"
+        objectPosition="center"
+      />
+    </chakra.a>
+  );
+};
+
+export default React.memo(chakra(NetworkIcon));

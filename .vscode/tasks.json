@@ -6,7 +6,7 @@
         // DEV SERVER
         {
             "type": "shell",
-            "command": "yarn dev:preset ${input:dev_config_preset}",
+            "command": "pnpm dev:preset ${input:dev_config_preset} --port ${input:dev_server_port}",
             "problemMatcher": [],
             "label": "dev server",
             "detail": "start local dev server",
@@ -20,27 +20,6 @@
             "icon": {
                 "color": "terminal.ansiMagenta",
                 "id": "server-process"
-            },
-            "runOptions": {
-                "instanceLimit": 1
-            }
-        },
-        {
-            "type": "shell",
-            "command": "yarn dev:preset:sync --name=${input:dev_config_preset}",
-            "problemMatcher": [],
-            "label": "dev preset sync",
-            "detail": "synchronize dev preset",
-            "presentation": {
-                "reveal": "always",
-                "panel": "shared",
-                "focus": true,
-                "close": false,
-                "revealProblems": "onProblem",
-            },
-            "icon": {
-                "color": "terminal.ansiMagenta",
-                "id": "repo-sync"
             },
             "runOptions": {
                 "instanceLimit": 1
@@ -70,11 +49,11 @@
             "group": "build",
         },
         {
-            "type": "npm",
-            "script": "lint:eslint:fix",
+            "type": "shell",
+            "command": "pnpm lint:eslint --fix",
             "problemMatcher": [],
             "label": "eslint",
-            "detail": "run eslint",
+            "detail": "run eslint --fix",
             "presentation": {
                 "reveal": "always",
                 "panel": "shared",
@@ -94,7 +73,7 @@
         // PW TESTS
         {
             "type": "shell",
-            "command": "${input:pwDebugFlag} yarn test:pw:local ${relativeFileDirname}/${fileBasename} ${input:pwArgs}",
+            "command": "${input:pwDebugFlag} pnpm test:pw ${relativeFileDirname}/${fileBasename} ${input:pwArgs}",
             "problemMatcher": [],
             "label": "pw: local",
             "detail": "run visual components tests for current file",
@@ -115,7 +94,7 @@
         },
         {
             "type": "shell",
-            "command": "yarn test:pw:docker ${relativeFileDirname}/${fileBasename} ${input:pwArgs}",
+            "command": "pnpm test:pw --docker ${relativeFileDirname}/${fileBasename} ${input:pwArgs}",
             "problemMatcher": [],
             "label": "pw: docker",
             "detail": "run visual components tests for current file",
@@ -136,10 +115,31 @@
         },
         {
             "type": "shell",
-            "command": "yarn test:pw:docker ${input:pwArgs}",
+            "command": "pnpm test:pw --docker ${input:pwArgs}",
             "problemMatcher": [],
             "label": "pw: docker all",
             "detail": "run visual components tests",
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared",
+                "focus": true,
+                "close": false,
+                "revealProblems": "onProblem",
+            },
+            "icon": {
+                "color": "terminal.ansiBlue",
+                "id": "beaker"
+            },
+            "runOptions": {
+                "instanceLimit": 1
+            }
+        },
+        {
+            "type": "shell",
+            "command": "pnpm test:pw --docker --changed ${input:pwArgs}",
+            "problemMatcher": [],
+            "label": "pw: changed",
+            "detail": "run visual components tests affected by the changed files in the current branch",
             "presentation": {
                 "reveal": "always",
                 "panel": "shared",
@@ -176,32 +176,11 @@
                 "instanceLimit": 1
             }
         },
-        {
-            "type": "shell",
-            "command": "yarn test:pw:detect-affected",
-            "problemMatcher": [],
-            "label": "pw: detect affected",
-            "detail": "detect PW tests affected by changes in current branch",
-            "presentation": {
-                "reveal": "always",
-                "panel": "shared",
-                "focus": true,
-                "close": false,
-                "revealProblems": "onProblem",
-            },
-            "icon": {
-                "color": "terminal.ansiBlue",
-                "id": "diff"
-            },
-            "runOptions": {
-                "instanceLimit": 1
-            },
-        },
 
         // VITEST TESTS
         {
             "type": "npm",
-            "script": "test:vitest",
+            "script": "test:vitest:watch",
             "problemMatcher": [],
             "label": "vitest",
             "detail": "run unit tests",
@@ -222,7 +201,7 @@
         },
         {
             "type": "shell",
-            "command": "yarn test:vitest ${relativeFileDirname}/${fileBasename}",
+            "command": "pnpm test:vitest ${relativeFileDirname}/${fileBasename}",
             "problemMatcher": [],
             "label": "vitest: file",
             "detail": "run unit tests for current file",
@@ -236,6 +215,50 @@
             "icon": {
                 "color": "terminal.ansiBlue",
                 "id": "beaker"
+            },
+            "runOptions": {
+                "instanceLimit": 1
+            },
+        },
+
+        // CODE COMPLEXITY
+        {
+            "type": "shell",
+            "command": "pnpm test:code-complexity ${relativeFileDirname}/${fileBasename}",
+            "problemMatcher": [],
+            "label": "code complexity: file",
+            "detail": "run code complexity for current file",
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared",
+                "focus": true,
+                "close": false,
+                "revealProblems": "onProblem",
+            },
+            "icon": {
+                "color": "terminal.ansiBlue",
+                "id": "file-binary"
+            },
+            "runOptions": {
+                "instanceLimit": 1
+            },
+        },
+        {
+            "type": "shell",
+            "command": "pnpm test:code-complexity --changed",
+            "problemMatcher": [],
+            "label": "code complexity: changed",
+            "detail": "run code complexity for changed files in the current branch",
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared",
+                "focus": true,
+                "close": false,
+                "revealProblems": "onProblem",
+            },
+            "icon": {
+                "color": "terminal.ansiBlue",
+                "id": "file-binary"
             },
             "runOptions": {
                 "instanceLimit": 1
@@ -265,7 +288,7 @@
         },
         {
             "type": "shell",
-            "command": "yarn start:docker:preset ${input:dev_config_preset}",
+            "command": "pnpm start:docker:preset ${input:dev_config_preset}",
             "problemMatcher": [],
             "label": "docker: run",
             "detail": "run docker container with env preset",
@@ -326,56 +349,61 @@
             "options": [
               "",
               "--update-snapshots",
-              "--update-snapshots --affected",
               "--ui",
             ],
             "default": ""
+        },
+        {
+            "type": "promptString",
+            "id": "dev_server_port",
+            "description": "What port to run the dev server on?",
+            "default": "3000"
         },
         {
             "type": "pickString",
             "id": "dev_config_preset",
             "description": "Choose dev server config preset:",
             "options": [
-              "all",
-              "main",
-              "localhost",
+              // presets:start — generated from tools/dev-server/registry.json (run `pnpm presets:sync`)
               "arbitrum",
               "arbitrum_sepolia",
-              "arbitrum_nova",
+              "arc_testnet",
               "base",
               "blackfort_testnet",
               "celo",
               "celo_sepolia",
-              "garnet",
-              "gnosis",
-              "immutable",
+              "eden_testnet",
               "eth",
               "eth_sepolia",
               "filecoin",
+              "fuse",
+              "gnosis",
+              "gnosis_chiado",
+              "hpp",
+              "immutable",
               "mega_eth",
-              "mekong",
-              "multichain_dev",
-              "multichain_prod",
+              "multichain",
               "neon_devnet",
               "numine",
               "optimism",
               "optimism_sepolia",
               "polygon",
-              "rari_testnet",
+              "rootstock",
               "rootstock_testnet",
-              "scroll_sepolia",
+              "robinhood",
               "shibarium",
               "stability_testnet",
+              "staging",
+              "staging_multichain",
               "tac",
               "tac_spb",
               "zetachain",
               "zetachain_testnet",
-              "zkevm",
               "zilliqa",
               "zksync",
-              "zora",
+              // presets:end
             ],
-            "default": "main"
+            "default": "staging"
         },
     ],
 }

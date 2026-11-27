@@ -1,0 +1,68 @@
+// SPDX-License-Identifier: LicenseRef-Blockscout
+
+import type { UseQueryResult } from '@tanstack/react-query';
+import React from 'react';
+
+import type { operations } from '@blockscout/api-types';
+import type { TransactionsSortingValue } from 'src/slices/tx/types/api';
+
+import type { ResourceError } from 'src/api/resources';
+
+import * as cookies from 'src/shared/storage/cookies';
+
+import type { SelectOption } from 'src/toolkit/chakra/select';
+
+import sortTxs from '../utils/sort-txs';
+
+export const SORT_OPTIONS: Array<SelectOption<TransactionsSortingValue>> = [
+  { label: 'Default', value: 'default' },
+  { label: 'Value ascending', value: 'value-asc' },
+  { label: 'Value descending', value: 'value-desc' },
+  { label: 'Fee ascending', value: 'fee-asc' },
+  { label: 'Fee descending', value: 'fee-desc' },
+  { label: 'Block number ascending', value: 'block_number-asc' },
+];
+
+export const SORT_OPTIONS_WITHOUT_BLOCK: Array<SelectOption<TransactionsSortingValue>> =
+  SORT_OPTIONS.filter(({ value }) => !value.startsWith('block_number'));
+
+type SortingValue = TransactionsSortingValue;
+
+function getInitialSorting(withBlockSort: boolean): SortingValue {
+  const value = cookies.get(cookies.NAMES.TXS_SORT);
+  const options = withBlockSort ? SORT_OPTIONS : SORT_OPTIONS_WITHOUT_BLOCK;
+  return options.find((option) => option.value === value)?.value ?? 'default';
+}
+
+type HookResult = UseQueryResult<operations['TransactionController.transactions']['json'], ResourceError<unknown>> & {
+  sorting: SortingValue;
+  setSortByValue: (value: SortingValue) => void;
+};
+
+export default function useTxsSort(
+  queryResult: UseQueryResult<operations['TransactionController.transactions']['json'], ResourceError<unknown>>,
+  withBlockSort = true,
+): HookResult {
+
+  const [ sorting, setSorting ] = React.useState<SortingValue>(() => getInitialSorting(withBlockSort));
+
+  const setSortByValue = React.useCallback((value: SortingValue) => {
+    const newVal: SortingValue = value !== sorting ? value : 'default';
+    cookies.set(cookies.NAMES.TXS_SORT, newVal);
+    setSorting(newVal);
+  }, [ sorting ]);
+
+  return React.useMemo(() => {
+    if (queryResult.isError || queryResult.isPending) {
+      return { ...queryResult, setSortByValue, sorting };
+    }
+
+    return {
+      ...queryResult,
+      data: { ...queryResult.data, items: queryResult.data.items.slice().sort(sortTxs(sorting)) },
+      setSortByValue,
+      sorting,
+    };
+  }, [ queryResult, setSortByValue, sorting ]);
+
+}

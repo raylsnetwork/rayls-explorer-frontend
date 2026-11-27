@@ -1,11 +1,13 @@
 import type { PlaywrightTestConfig } from '@playwright/experimental-ct-react';
 import { devices, defineConfig } from '@playwright/experimental-ct-react';
 import react from '@vitejs/plugin-react';
-import type { Plugin } from 'esbuild';
 import svgr from 'vite-plugin-svgr';
-import tsconfigPaths from 'vite-tsconfig-paths';
 
-import appConfig from 'configs/app';
+import appConfig from 'src/config';
+
+import { ctPort } from './playwright/utils/ports';
+
+const isInsideWorktree = __dirname.includes('/.claude/worktrees/');
 
 /**
  * See https://playwright.dev/docs/test-configuration.
@@ -14,6 +16,8 @@ const config: PlaywrightTestConfig = defineConfig({
   testDir: './',
 
   testMatch: /.*\.pw\.tsx/,
+
+  testIgnore: isInsideWorktree ? undefined : '.claude/worktrees/**',
 
   snapshotPathTemplate: '{testDir}/{testFileDir}/__screenshots__/{testFileName}_{projectName}_{arg}{ext}',
 
@@ -34,12 +38,20 @@ const config: PlaywrightTestConfig = defineConfig({
   // so we opt out of parallel tests in any environment
   workers: 1,
 
+  outputDir: 'playwright-results',
+
   /* Reporter to use. See https://playwright.dev/docs/test-reporters */
-  reporter: process.env.CI ? 'blob' : 'html',
+  // The json report sits under outputDir rather than next to the html one: the html reporter wipes
+  // playwright-report/ when the run ends, whereas outputDir is cleared at run start.
+  reporter: [
+    process.env.CI ? [ 'blob' ] : [ 'html' ],
+    [ 'json', { outputFile: 'playwright-results/report.json' } ],
+  ],
 
   expect: {
     toHaveScreenshot: {
       threshold: 0.05,
+      maxDiffPixels: 5,
     },
   },
 
@@ -51,26 +63,44 @@ const config: PlaywrightTestConfig = defineConfig({
     trace: 'on-first-retry',
 
     /* Port to use for Playwright component endpoint. */
-    ctPort: 3100,
+    ctPort,
 
     headless: true,
 
     ctViteConfig: {
       plugins: [
-        tsconfigPaths({ loose: true, ignoreConfigErrors: true }),
         react(),
         svgr({
-          exportAsDefault: true,
+          include: '**/*.svg',
+          svgrOptions: {
+            icon: true,
+            svgo: true,
+            plugins: [ '@svgr/plugin-jsx' ],
+            svgoConfig: {
+              plugins: [
+                {
+                  name: 'preset-default',
+                  params: {
+                    overrides: {
+                      removeViewBox: false,
+                      removeHiddenElems: false,
+                    },
+                  },
+                },
+                'removeDimensions',
+              ],
+            },
+          },
         }),
-      ] as unknown as Array<Plugin>,
+      ],
       build: {
         // it actually frees some memory that vite needs a lot
         // https://github.com/storybookjs/builder-vite/issues/409#issuecomment-1152848986
         sourcemap: false,
         minify: false,
-        rollupOptions: {
+        rolldownOptions: {
           output: {
-            // Ensure __envs exists in every chunk so code (e.g. next/router, configs/app) that
+            // Ensure __envs exists in every chunk so code (e.g. configs/app) that
             // runs before index.ts/envs.js doesn't throw. Real envs are set when envs.js runs.
             //
             // Explanation:
@@ -85,6 +115,7 @@ const config: PlaywrightTestConfig = defineConfig({
         },
       },
       resolve: {
+        tsconfigPaths: true,
         alias: [
           // There is an issue with building these package using vite that I cannot resolve
           // The solution described here - https://github.com/vitejs/vite/issues/9703#issuecomment-1216662109
@@ -93,15 +124,13 @@ const config: PlaywrightTestConfig = defineConfig({
           { find: '@metamask/post-message-stream', replacement: './playwright/mocks/modules/@metamask/post-message-stream.js' },
           { find: '@metamask/providers', replacement: './playwright/mocks/modules/@metamask/providers.js' },
 
-          // '@metamask/sdk imports the browser module as UMD, but @wagmi/connectors expects it to be ESM
-          // so we do a little remapping here
-          { find: '@metamask/sdk', replacement: './node_modules/@metamask/sdk/dist/browser/es/metamask-sdk.js' },
-
           // Mock for growthbook to test feature flags
-          { find: 'lib/growthbook/useFeatureValue', replacement: './playwright/mocks/lib/growthbook/useFeatureValue.js' },
+          { find: 'src/services/growthbook/useFeatureValue', replacement: './playwright/mocks/client/services/growthbook/useFeatureValue.js' },
 
           // Mock for reCaptcha hook
-          { find: 'ui/shared/reCaptcha/useReCaptcha', replacement: './playwright/mocks/ui/shared/recaptcha/useReCaptcha.js' },
+          { find: 'src/services/re-captcha/useReCaptcha', replacement: './playwright/mocks/client/services/re-captcha/useReCaptcha.js' },
+          // Mock for reCaptcha widget, so Google's script never loads and never fires the init error
+          { find: /^react-google-recaptcha$/, replacement: './playwright/mocks/modules/react-google-recaptcha.js' },
 
           // The createWeb3Modal() function from web3modal/wagmi/react somehow pollutes the global styles which causes the tests to fail
           // We don't call this function in TestApp and since we use useWeb3Modal() and useWeb3ModalState() hooks in the code, we have to mock the module
@@ -114,11 +143,13 @@ const config: PlaywrightTestConfig = defineConfig({
           // Fix for @libp2p/utils missing merge-options export
           { find: '@libp2p/utils/merge-options', replacement: 'merge-options' },
 
-          // Mock for @helia/verified-fetch to avoid build issues in tests
+          // Mocks for the Helia packages to avoid build issues in tests
           { find: '@helia/verified-fetch', replacement: './playwright/mocks/modules/@helia/verified-fetch.js' },
+          { find: /^@helia\/http$/, replacement: './playwright/mocks/modules/@helia/http.js' },
+          { find: /^helia$/, replacement: './playwright/mocks/modules/helia.js' },
 
-          // Mock for @specify-sh/sdk to avoid build issues in tests
-          { find: '@specify-sh/sdk', replacement: './playwright/mocks/modules/@specify-sh/sdk.js' },
+          // Mock for @specify-sh/publisher-sdk to avoid build issues in tests
+          { find: '@specify-sh/publisher-sdk', replacement: './playwright/mocks/modules/@specify-sh/publisher-sdk.js' },
         ],
       },
       define: {
@@ -128,8 +159,9 @@ const config: PlaywrightTestConfig = defineConfig({
   },
 
   // configured projects
-  // these projects are also used for sharding tests in CI
-  // when adding or deleting a project, make sure to update github workflow accordingly
+  // these projects are also used for sharding tests in CI: the `pw_tests` matrix in
+  // .github/workflows/checks.yml runs one job per project, with `default` split into three shards
+  // when adding or deleting a project, or changing the shard count, make sure to update github workflow accordingly
   projects: [
     {
       name: 'default',

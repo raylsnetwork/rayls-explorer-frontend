@@ -2,7 +2,7 @@ import type { TestFixture, Page } from '@playwright/test';
 import { isEqual } from 'es-toolkit';
 import { encodeFunctionData, encodeFunctionResult, type AbiFunction } from 'viem';
 
-import { getEnvValue } from 'configs/app/utils';
+import { getEnvValue } from 'src/config/utils/envs';
 
 interface Params {
   abiItem: AbiFunction;
@@ -24,15 +24,19 @@ const fixture: TestFixture<MockContractReadResponseFixture, { page: Page }> = as
       return;
     }
 
+    // Playwright's own `times` counts every invocation, a miss included, so a handler consulted for an
+    // unrelated RPC call would expire before its matching request arrives; count fulfilled matches here.
+    let fulfilledCount = 0;
+
     await page.route(rpcUrl, (route) => {
       const method = route.request().method();
 
-      if (method !== 'POST') {
-        route.continue();
-        return;
+      if (method !== 'POST' || fulfilledCount >= times) {
+        return route.fallback();
       }
 
-      const json = route.request().postDataJSON();
+      const dataJson = route.request().postDataJSON();
+      const json = Array.isArray(dataJson) ? dataJson[0] : dataJson;
       const params = json?.params?.[0];
       const id = json?.id;
 
@@ -46,21 +50,27 @@ const fixture: TestFixture<MockContractReadResponseFixture, { page: Page }> = as
         value: params?.value,
       };
 
-      if (isEqual(params, callParams) && id !== undefined && json?.method === rpcMethod) {
-        return route.fulfill({
-          status: 200,
-          json: {
-            id,
-            jsonrpc: '2.0',
-            result: noResultEncoding ? result : encodeFunctionResult({
-              abi: [ abiItem ],
-              functionName: abiItem.name,
-              result: result as never,
-            }),
-          },
-        });
+      if (!isEqual(params, callParams) || id === undefined || json?.method !== rpcMethod) {
+        return route.fallback();
       }
-    }, { times });
+
+      fulfilledCount++;
+
+      const response = {
+        id,
+        jsonrpc: '2.0',
+        result: noResultEncoding ? result : encodeFunctionResult({
+          abi: [ abiItem ],
+          functionName: abiItem.name,
+          result: result as never,
+        }),
+      };
+
+      return route.fulfill({
+        status: 200,
+        json: Array.isArray(dataJson) ? [ response ] : response,
+      });
+    });
   });
 };
 

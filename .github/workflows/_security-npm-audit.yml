@@ -1,7 +1,7 @@
 # =============================================================================
-# Reusable Workflow: yarn Security Audit
+# Reusable Workflow: pnpm Security Audit
 # =============================================================================
-# Audits yarn dependencies for known vulnerabilities.
+# Audits pnpm dependencies for known vulnerabilities.
 # Security gate: fails if CRITICAL vulnerabilities are found.
 #
 # Results with severity counts are embedded in the job Summary.
@@ -11,10 +11,10 @@
 #     security:
 #       uses: ./.github/workflows/_security-npm-audit.yml
 #       with:
-#         node_version: "22"   # optional, defaults to "22"
+#         node_version: "24.21.0"   # optional, defaults to "24.21.0"
 # =============================================================================
 
-name: yarn Security Audit
+name: pnpm Security Audit
 
 on:
   workflow_call:
@@ -23,37 +23,40 @@ on:
         description: "Node.js version to use"
         required: false
         type: string
-        default: "22"
+        default: "24.21.0"
 
 jobs:
   audit:
-    name: 🔒 Security Audit (yarn)
+    name: 🔒 Security Audit (pnpm)
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
 
+      # Node and pnpm versions must match the Dockerfile and package.json (engines, packageManager).
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 12.4.1
+
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ inputs.node_version }}
-          cache: "yarn"
 
-      - run: yarn install --frozen-lockfile --ignore-engines
-
-      - name: yarn audit (JSON report)
+      # pnpm audit resolves advisories from the lockfile alone — no install needed.
+      - name: pnpm audit (JSON report)
         id: audit
-        run: yarn audit --json > yarn-audit.jsonl 2>&1 || true
+        run: pnpm audit --json > pnpm-audit.json 2>/dev/null || true
 
       - name: Parse audit summary
         id: summary
         run: |
-          SUMMARY=$(grep '"type":"auditSummary"' yarn-audit.jsonl | tail -1 || echo "")
-          if [[ -n "$SUMMARY" ]]; then
-            CRITICAL=$(echo "$SUMMARY" | jq '.data.vulnerabilities.critical // 0')
-            HIGH=$(echo "$SUMMARY" | jq '.data.vulnerabilities.high // 0')
-            MODERATE=$(echo "$SUMMARY" | jq '.data.vulnerabilities.moderate // 0')
-            LOW=$(echo "$SUMMARY" | jq '.data.vulnerabilities.low // 0')
-            INFO=$(echo "$SUMMARY" | jq '.data.vulnerabilities.info // 0')
+          if jq -e '.metadata.vulnerabilities' pnpm-audit.json > /dev/null 2>&1; then
+            CRITICAL=$(jq '.metadata.vulnerabilities.critical // 0' pnpm-audit.json)
+            HIGH=$(jq '.metadata.vulnerabilities.high // 0' pnpm-audit.json)
+            MODERATE=$(jq '.metadata.vulnerabilities.moderate // 0' pnpm-audit.json)
+            LOW=$(jq '.metadata.vulnerabilities.low // 0' pnpm-audit.json)
+            INFO=$(jq '.metadata.vulnerabilities.info // 0' pnpm-audit.json)
           else
             CRITICAL=0; HIGH=0; MODERATE=0; LOW=0; INFO=0
           fi
@@ -87,13 +90,13 @@ jobs:
             if [[ "${CRITICAL:-0}" -gt 0 ]]; then
               echo "## ❌ Dependency Security Gate FAILED"
               echo ""
-              echo "> **PR is blocked.** Fix all CRITICAL yarn vulnerabilities before merging."
-              echo "> Run \`yarn audit\` locally and update the affected packages."
+              echo "> **PR is blocked.** Fix all CRITICAL pnpm vulnerabilities before merging."
+              echo "> Run \`pnpm audit\` locally and update the affected packages."
             else
               echo "## ✅ Dependency Security Gate Passed"
             fi
             echo ""
-            echo "### yarn audit Results"
+            echo "### pnpm audit Results"
             echo ""
             echo "| Severity | Count |"
             echo "|----------|-------|"
@@ -105,6 +108,6 @@ jobs:
             echo "| **Total** | **${TOTAL:-0}** |"
             if [[ "${TOTAL:-0}" -gt 0 ]]; then
               echo ""
-              echo "> Run \`yarn audit\` locally for full details, or check **Security → Dependabot alerts** in this repo."
+              echo "> Run \`pnpm audit\` locally for full details, or check **Security → Dependabot alerts** in this repo."
             fi
           } >> $GITHUB_STEP_SUMMARY

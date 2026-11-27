@@ -10,7 +10,7 @@ export default defineConfig({
       formats: [ 'es' ],
       fileName: (format, entryName) => `${ entryName }.js`,
     },
-    rollupOptions: {
+    rolldownOptions: {
       external: [ 'node:worker_threads', 'node:url', 'node:path', 'node:fs' ],
       output: {
         dir: 'dist',
@@ -22,11 +22,7 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      configs: resolve(__dirname, '../../../configs'),
-      lib: resolve(__dirname, '../../../lib'),
-      toolkit: resolve(__dirname, '../../../toolkit'),
-      types: resolve(__dirname, '../../../types'),
+      src: resolve(__dirname, '../../../src'),
     },
-    preserveSymlinks: true,
   },
 });

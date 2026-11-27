@@ -1,0 +1,188 @@
+import React from 'react';
+
+import { token as contract } from 'src/slices/address/mocks/address';
+import { tokenInfo, tokenCounters, bridgedTokenA } from 'src/slices/token/mocks/info';
+
+import * as verifiedAddressesMocks from 'src/features/account/mocks/verified-addresses';
+
+import config from 'src/config';
+
+import { ENVS_MAP } from 'playwright/fixtures/mockEnvs';
+import * as socketServer from 'playwright/fixtures/socketServer';
+import type { TestFnArgs } from 'playwright/lib';
+import { test, expect, devices } from 'playwright/lib';
+import * as pwConfig from 'playwright/utils/config';
+
+import Token from './Token';
+
+const hash = tokenInfo.address_hash;
+
+const hooksConfig = {
+  router: {
+    query: { hash },
+  },
+};
+
+const addressMetadataQueryParams = {
+  addresses: [ hash ],
+  chainId: config.chain.id,
+  tagsLimit: '20',
+};
+
+// FIXME
+// test cases which use socket cannot run in parallel since the socket server always run on the same port
+test.describe.configure({ mode: 'serial' });
+
+const mockTokenData = async(mockApiResponse: TestFnArgs['mockApiResponse']) => {
+  await mockApiResponse('core:token', tokenInfo, { pathParams: { hash } });
+  await mockApiResponse('core:address', contract, { pathParams: { hash } });
+  await mockApiResponse('core:token_counters', tokenCounters, { pathParams: { hash } });
+  await mockApiResponse('core:token_transfers', { items: [], next_page_params: null }, { pathParams: { hash } });
+  // the metadata service is down, so the page shows no tags
+  await mockApiResponse('metadata:info', null as never, { queryParams: addressMetadataQueryParams, status: 500 });
+};
+
+// the other optional services are down too, so the page shows neither verified info nor the token icon
+const mockOptionalServicesDown = async(mockApiResponse: TestFnArgs['mockApiResponse'], page: TestFnArgs['page']) => {
+  await mockApiResponse(
+    'contractInfo:token_verified_info',
+    null as never,
+    { pathParams: { instanceId: config.apis.contractInfo?.instanceId, hash }, status: 500 },
+  );
+  await page.route(tokenInfo.icon_url as string, (route) => route.fulfill({ status: 404 }));
+};
+
+test.beforeEach(async({ mockTextAd }) => {
+  await mockTextAd();
+});
+
+test('base view', async({ render, page, createSocket, mockApiResponse }) => {
+  await mockTokenData(mockApiResponse);
+  await mockOptionalServicesDown(mockApiResponse, page);
+  const component = await render(<Token/>, { hooksConfig }, { withSocket: true });
+
+  const socket = await createSocket();
+  await socketServer.joinChannel(socket, `tokens:${ hash }`);
+
+  await expect(component).toHaveScreenshot({
+    mask: [ page.locator(pwConfig.adsBannerSelector) ],
+    maskColor: pwConfig.maskColor,
+  });
+});
+
+test('with verified info', async({ render, page, createSocket, mockApiResponse, mockAssetResponse }) => {
+  test.slow();
+  await mockTokenData(mockApiResponse);
+  await mockApiResponse(
+    'contractInfo:token_verified_info',
+    verifiedAddressesMocks.TOKEN_INFO,
+    { pathParams: { instanceId: config.apis.contractInfo?.instanceId, hash } },
+  );
+  await mockAssetResponse(tokenInfo.icon_url as string, './playwright/mocks/image_s.jpg');
+
+  const component = await render(<Token/>, { hooksConfig }, { withSocket: true });
+
+  const socket = await createSocket();
+  const channel = await socketServer.joinChannel(socket, `tokens:${ hash }`);
+  socketServer.sendMessage(socket, channel, 'total_supply', { total_supply: 10 ** 20 });
+  await component.getByText('100 ARIA').waitFor({ state: 'visible', timeout: 10_000 });
+
+  await page.getByLabel('Show info').click();
+
+  await expect(component).toHaveScreenshot({
+    mask: [ page.locator(pwConfig.adsBannerSelector) ],
+    maskColor: pwConfig.maskColor,
+  });
+});
+
+test('bridged token', async({ render, page, createSocket, mockApiResponse, mockAssetResponse, mockEnvs }) => {
+  const hash = bridgedTokenA.address_hash;
+  const hooksConfig = {
+    router: {
+      query: { hash },
+    },
+  };
+
+  await mockEnvs(ENVS_MAP.bridgedTokens);
+  await mockApiResponse('core:token', bridgedTokenA, { pathParams: { hash } });
+  await mockApiResponse('core:address', contract, { pathParams: { hash } });
+  await mockApiResponse('core:token_counters', tokenCounters, { pathParams: { hash } });
+  await mockApiResponse('core:token_transfers', { items: [], next_page_params: null }, { pathParams: { hash } });
+  await mockApiResponse('metadata:info', null as never, { queryParams: { ...addressMetadataQueryParams, addresses: [ hash ] }, status: 500 });
+  await mockApiResponse(
+    'contractInfo:token_verified_info',
+    verifiedAddressesMocks.TOKEN_INFO,
+    { pathParams: { instanceId: config.apis.contractInfo?.instanceId, hash } },
+  );
+  await mockAssetResponse(tokenInfo.icon_url as string, './playwright/mocks/image_s.jpg');
+
+  const component = await render(<Token/>, { hooksConfig }, { withSocket: true });
+  const socket = await createSocket();
+  await socketServer.joinChannel(socket, `tokens:${ hash.toLowerCase() }`);
+  await component.getByText('369,000,000 HyFi').waitFor({ state: 'visible' });
+
+  await expect(component).toHaveScreenshot({
+    mask: [ page.locator(pwConfig.adsBannerSelector) ],
+    maskColor: pwConfig.maskColor,
+  });
+});
+
+test('scam token', async({ render, page, createSocket, mockApiResponse, mockEnvs }) => {
+  await mockEnvs([
+    [ 'NEXT_PUBLIC_VIEWS_TOKEN_SCAM_TOGGLE_ENABLED', 'true' ],
+  ]);
+  await mockTokenData(mockApiResponse);
+  await mockOptionalServicesDown(mockApiResponse, page);
+  await mockApiResponse('core:token', { ...tokenInfo, reputation: 'scam' }, { pathParams: { hash } });
+  const component = await render(<Token/>, { hooksConfig }, { withSocket: true });
+
+  const socket = await createSocket();
+  await socketServer.joinChannel(socket, `tokens:${ hash }`);
+
+  await expect(component).toHaveScreenshot({
+    mask: [ page.locator(pwConfig.adsBannerSelector) ],
+    maskColor: pwConfig.maskColor,
+  });
+});
+
+test.describe('mobile', () => {
+  test.use({ viewport: devices['iPhone 13 Pro'].viewport });
+
+  test('base view', async({ render, page, createSocket, mockApiResponse }) => {
+    test.slow();
+    await mockTokenData(mockApiResponse);
+    await mockOptionalServicesDown(mockApiResponse, page);
+    const component = await render(<Token/>, { hooksConfig }, { withSocket: true });
+    const socket = await createSocket();
+    const channel = await socketServer.joinChannel(socket, `tokens:${ hash }`);
+    socketServer.sendMessage(socket, channel, 'total_supply', { total_supply: 10 ** 20 });
+    await component.getByText('100 ARIA').waitFor({ state: 'visible', timeout: 10_000 });
+
+    await expect(component).toHaveScreenshot({
+      mask: [ page.locator(pwConfig.adsBannerSelector) ],
+      maskColor: pwConfig.maskColor,
+    });
+  });
+
+  test('with verified info', async({ render, page, createSocket, mockApiResponse, mockAssetResponse }) => {
+    test.slow();
+    await mockTokenData(mockApiResponse);
+    await mockApiResponse(
+      'contractInfo:token_verified_info',
+      verifiedAddressesMocks.TOKEN_INFO,
+      { pathParams: { instanceId: config.apis.contractInfo?.instanceId, hash } },
+    );
+    await mockAssetResponse(tokenInfo.icon_url as string, './playwright/mocks/image_s.jpg');
+
+    const component = await render(<Token/>, { hooksConfig }, { withSocket: true });
+    const socket = await createSocket();
+    const channel = await socketServer.joinChannel(socket, `tokens:${ hash }`);
+    socketServer.sendMessage(socket, channel, 'total_supply', { total_supply: 10 ** 20 });
+    await component.getByText('100 ARIA').waitFor({ state: 'visible', timeout: 10_000 });
+
+    await expect(component).toHaveScreenshot({
+      mask: [ page.locator(pwConfig.adsBannerSelector) ],
+      maskColor: pwConfig.maskColor,
+    });
+  });
+});

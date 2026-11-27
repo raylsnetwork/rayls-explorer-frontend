@@ -1,17 +1,38 @@
-import tsconfigPaths from 'vite-tsconfig-paths';
-
 import { defineConfig } from 'vitest/config';
+
+// the Next.js build turns .svg imports into React components via @svgr/webpack;
+// mirror that with a minimal stub so components importing svg files render in tests
+const svgStub = {
+  name: 'svg-stub',
+  enforce: 'pre' as const,
+  load(id: string) {
+    if (id.split('?')[0].endsWith('.svg')) {
+      return 'import React from "react"; export default function SvgStub(props) { return React.createElement("svg", props); }';
+    }
+  },
+};
 
 export default defineConfig({
   plugins: [
-    tsconfigPaths({
-      ignoreConfigErrors: true,
-    }),
+    svgStub,
   ],
+  resolve: {
+    tsconfigPaths: true,
+  },
   test: {
     globalSetup: [ './vitest/global-setup.ts' ],
     setupFiles: [ './vitest/setup.ts' ],
     include: [ '**/*.spec.ts', '**/*.spec.tsx' ],
-    exclude: [ '**/node_modules/**', '**/node_modules_linux/**' ],
+    // the design-readout calibration set is read with fs, not imported, so a `--changed` run would
+    // not see an edited entry; its spec is what keeps the committed set green
+    forceRerunTriggers: [ 'tools/design-readout/calibration/**' ],
+    // agent worktrees are full checkouts of the repo; their specs would run a second time.
+    // Stryker's sandbox is a copy of the repo too, and survives a run it did not finish.
+    exclude: [
+      '**/node_modules/**',
+      '**/node_modules_linux/**',
+      '.claude/worktrees/**',
+      'tools/mutation-testing/.stryker-tmp/**',
+    ],
   },
 });

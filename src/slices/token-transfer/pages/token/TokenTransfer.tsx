@@ -1,0 +1,127 @@
+// SPDX-License-Identifier: LicenseRef-Blockscout
+
+import { HStack } from '@chakra-ui/react';
+import React from 'react';
+
+import type { schemas } from '@blockscout/api-types';
+import type { SocketMessage } from 'src/api/socket/types';
+
+import useSocketChannel from 'src/api/socket/useSocketChannel';
+import useSocketMessage from 'src/api/socket/useSocketMessage';
+
+import ActionBar from 'src/shell/page/action-bar/ActionBar';
+
+import TokenTransfersTable from 'src/slices/token-transfer/components/table/TokenTransfersTable';
+import { useTokenTransferColumns } from 'src/slices/token-transfer/hooks/useTokenTransferColumns';
+
+import TokenAdvancedFilterLink from 'src/features/advanced-filter/pages/token/TokenAdvancedFilterLink';
+import { useMultichainContext } from 'src/features/multichain/context';
+
+import ColumnsButton from 'src/shared/lists/columns/ColumnsButton';
+import DataList from 'src/shared/lists/DataList';
+import useGradualIncrement from 'src/shared/numbers/useGradualIncrement';
+import Pagination from 'src/shared/pagination/Pagination';
+import useApiPaginatedQuery from 'src/shared/pagination/useApiPaginatedQuery';
+
+import { getTokenTransfersStub } from '../../stubs';
+
+interface Props {
+  token: schemas['Token'] | undefined;
+  isLoading?: boolean;
+  tokenId?: string;
+  tokenInstance?: schemas['TokenInstance'];
+};
+
+const TokenTransfer = ({ tokenId, token, isLoading: isLoadingProp, tokenInstance }: Props) => {
+  const [ newItemsCount, setNewItemsCount ] = useGradualIncrement(0);
+  const [ showSocketErrorAlert, setShowSocketErrorAlert ] = React.useState(false);
+  const multichainContext = useMultichainContext();
+  const columnsState = useTokenTransferColumns('token', { tokenType: token?.type, chainConfig: multichainContext?.chain?.app_config });
+
+  // The backend emits `token_transfer` events for the whole token, not per instance, so on the NFT
+  // instance page they produce false "N more transfers" notices.
+  // See https://github.com/blockscout/frontend/issues/3653
+  const isSocketEnabled = !tokenId;
+
+  const transfersQuery = useApiPaginatedQuery({
+    resourceName: tokenId ? 'core:token_instance_transfers' : 'core:token_transfers',
+    pathParams: { hash: token?.address_hash, id: tokenId },
+    options: {
+      enabled: !isLoadingProp && Boolean(token?.address_hash),
+      placeholderData: getTokenTransfersStub(token?.type),
+    },
+  });
+
+  const handleNewTransfersMessage: SocketMessage.TokenTransfers['handler'] = (payload) => {
+    setNewItemsCount(payload.token_transfer);
+  };
+
+  const handleSocketClose = React.useCallback(() => {
+    setShowSocketErrorAlert(true);
+  }, []);
+
+  const handleSocketError = React.useCallback(() => {
+    setShowSocketErrorAlert(true);
+  }, []);
+
+  const channel = useSocketChannel({
+    topic: `tokens:${ token?.address_hash.toLowerCase() }`,
+    onSocketClose: handleSocketClose,
+    onSocketError: handleSocketError,
+    isDisabled: !isSocketEnabled || transfersQuery.isPlaceholderData || transfersQuery.isError || transfersQuery.pagination.page !== 1,
+  });
+  useSocketMessage({
+    channel,
+    event: 'token_transfer',
+    handler: handleNewTransfersMessage,
+  });
+
+  const isLoading = transfersQuery.isInitialLoading || isLoadingProp;
+
+  const content = transfersQuery.data?.items && token ? (
+    <TokenTransfersTable
+      columns={ columnsState.columns }
+      items={ transfersQuery.data.items }
+      showSocketInfo={ isSocketEnabled && transfersQuery.pagination.page === 1 }
+      showSocketErrorAlert={ showSocketErrorAlert }
+      socketInfoNum={ newItemsCount }
+      enableTimeIncrement
+      tokenId={ tokenId }
+      instance={ tokenInstance }
+      isLoading={ isLoading }
+      resetKey={ transfersQuery.queryHash }
+    />
+  ) : null;
+
+  const actionBar = token ? (
+    <ActionBar mt={ -6 }>
+      <HStack gap={ 3 }>
+        <ColumnsButton
+          tableColumns={ columnsState.selectableColumns }
+          columns={ columnsState.checkedColumns }
+          onChange={ columnsState.onColumnsChange }
+          onOrderChange={ columnsState.onColumnsReorder }
+          selected={ columnsState.isCustomized }
+          onReset={ columnsState.onColumnsReset }
+          isLoading={ isLoading }
+        />
+        <TokenAdvancedFilterLink token={ token } isLoading={ isLoading } minH={ 8 }/>
+      </HStack>
+      { transfersQuery.pagination.isVisible && <Pagination ml="auto" { ...transfersQuery.pagination }/> }
+    </ActionBar>
+  ) : null;
+
+  return (
+    <DataList
+      isError={ transfersQuery.isError }
+      itemsNum={ transfersQuery.data?.items.length }
+      emptyText="There are no token transfers."
+      actionBar={ actionBar }
+      isTransitioning={ transfersQuery.isTransitioning }
+    >
+      { content }
+    </DataList>
+  );
+};
+
+export default React.memo(TokenTransfer);

@@ -1,8 +1,10 @@
+import eslintReactPlugin from '@eslint-react/eslint-plugin';
 import { includeIgnoreFile } from '@eslint/compat';
 import jsPlugin from '@eslint/js';
 import nextJsPlugin from '@next/eslint-plugin-next';
 import stylisticPlugin from '@stylistic/eslint-plugin';
 import reactQueryPlugin from '@tanstack/eslint-plugin-query';
+import boundariesPlugin from 'eslint-plugin-boundaries';
 import consistentDefaultExportNamePlugin from 'eslint-plugin-consistent-default-export-name';
 import importPlugin from 'eslint-plugin-import';
 import importHelpersPlugin from 'eslint-plugin-import-helpers';
@@ -18,10 +20,64 @@ import { fileURLToPath } from 'node:url';
 
 import tseslint from 'typescript-eslint';
 
+import { strykerDisableRule } from './tools/mutation-testing/eslint/well-formed-disable.mjs';
+
+const SPDX_HEADER = '// SPDX-License-Identifier: LicenseRef-Blockscout';
+
+const spdxLicenseRule = {
+  meta: {
+    type: 'layout',
+    fixable: 'code',
+    messages: { missing: `File must start with: ${ SPDX_HEADER }` },
+    schema: [],
+  },
+  create(context) {
+    return {
+      Program() {
+        const src = context.sourceCode.getText();
+        if (src.startsWith(SPDX_HEADER + '\n')) {
+          return;
+        }
+        context.report({
+          loc: { line: 1, column: 0 },
+          messageId: 'missing',
+          fix: (fixer) => fixer.replaceTextRange([ 0, 0 ], SPDX_HEADER + '\n\n'),
+        });
+      },
+    };
+  },
+};
+
+/*
+ * The router facade (src/shared/router) is the only consumer of the framework's routing primitives; everything
+ * else goes through it so a router change touches the adapter, not the app.
+ */
+const ROUTER_FRAMEWORK_MODULES = [
+  { name: 'next/router', message: 'Please use useRouter() from "src/shared/router/useRouter" instead' },
+  { name: 'next/navigation', message: 'Please use usePathname() from "src/shared/router/usePathname" instead' },
+  { name: 'next/link', message: 'Please use the Link component from "src/toolkit/chakra/link" instead' },
+  {
+    name: 'nextjs-routes',
+    message: 'Please import route() and the Route / Query / DynamicRoute types from "src/shared/router/routes" instead',
+  },
+];
+const ROUTER_FRAMEWORK_MODULE_NAMES = ROUTER_FRAMEWORK_MODULES.map((module) => module.name);
+
+const ROUTER_FRAMEWORK_ALLOWED_FILES = [
+  'src/shared/router/NextRouterProvider.tsx',
+  'src/shared/router/routes.ts',
+  'src/toolkit/router/**',
+  'vitest/**',
+  'playwright/**',
+];
+
 const RESTRICTED_MODULES = {
   paths: [
-    { name: 'dayjs', message: 'Please use lib/date/dayjs.ts instead of directly importing dayjs' },
-    { name: '@chakra-ui/icons', message: 'Using @chakra-ui/icons is prohibited. Please use regular svg-icon instead (see examples in "icons/" folder)' },
+    { name: 'dayjs', message: 'Please use src/shared/date-and-time/dayjs.ts instead of directly importing dayjs' },
+    {
+      name: '@chakra-ui/icons',
+      message: 'Using @chakra-ui/icons is prohibited. Please use regular svg-icon instead (see examples in "src/sprite/icons/" folder)',
+    },
     { name: '@metamask/providers', message: 'Please lazy-load @metamask/providers or use useProvider hook instead' },
     { name: '@metamask/post-message-stream', message: 'Please lazy-load @metamask/post-message-stream or use useProvider hook instead' },
     { name: 'playwright/TestApp', message: 'Please use render() fixture from test() function of playwright/lib module' },
@@ -36,20 +92,51 @@ const RESTRICTED_MODULES = {
         'Select', 'SelectRoot', 'SelectControl', 'SelectContent', 'SelectItem', 'SelectValueText',
         'Heading', 'Badge', 'Tabs', 'Show', 'Hide', 'Checkbox', 'CheckboxGroup',
         'Table', 'TableRoot', 'TableBody', 'TableHeader', 'TableRow', 'TableCell',
-        'Menu', 'MenuRoot', 'MenuTrigger', 'MenuContent', 'MenuItem', 'MenuTriggerItem', 'MenuRadioItemGroup', 'MenuContextTrigger',
+        'Menu', 'MenuRoot', 'MenuTrigger', 'MenuContent', 'MenuItem', 'MenuTriggerItem', 'MenuCheckboxItem', 'MenuRadioItem', 'MenuRadioItemGroup',
+        'MenuContextTrigger',
         'Rating', 'RatingGroup', 'Textarea', 'Progress', 'ProgressCircle',
         'EmptyState',
       ],
-      message: 'Please use corresponding component or hook from "toolkit" instead',
+      message: 'Please use corresponding component or hook from "src/toolkit" instead',
     },
-    {
-      name: 'next/link',
-      importNames: [ 'default' ],
-      message: 'Please use toolkit/chakra/link component instead',
-    },
+    ...ROUTER_FRAMEWORK_MODULES,
   ],
   patterns: [
-    'icons/*',
+    { group: [ 'src/sprite/icons/*' ] },
+  ],
+};
+
+const ANALYTICS_VENDOR_MESSAGE =
+  'Analytics vendors are reached only through the provider-neutral facade. Please import from "src/shared/analytics" instead.';
+
+const ANALYTICS_VENDOR_ALLOWED_FILES = [
+  'src/shared/analytics/**',
+  'src/services/mixpanel/**',
+  'src/services/posthog/**',
+  'src/config/**',
+  'src/server/csp/**',
+  '**/*.spec.{ts,tsx}',
+];
+
+const RESTRICTED_MODULES_WITH_ANALYTICS_VENDORS = {
+  paths: [
+    ...RESTRICTED_MODULES.paths,
+    { name: 'mixpanel-browser', message: ANALYTICS_VENDOR_MESSAGE },
+    { name: 'posthog-js', message: ANALYTICS_VENDOR_MESSAGE },
+  ],
+  patterns: [
+    ...RESTRICTED_MODULES.patterns,
+    {
+      group: [
+        'mixpanel-browser/**',
+        'posthog-js/**',
+        'src/services/mixpanel',
+        'src/services/mixpanel/**',
+        'src/services/posthog',
+        'src/services/posthog/**',
+      ],
+      message: ANALYTICS_VENDOR_MESSAGE,
+    },
   ],
 };
 
@@ -57,22 +144,103 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const gitignorePath = path.resolve(__dirname, '.gitignore');
 
+/** @see src/ARCH_REDESIGN.md §8 — dependency layers for migrated code */
+const ARCH_BOUNDARY_ELEMENTS = [
+  { type: 'src-api', pattern: 'src/api/**', mode: 'full' },
+  { type: 'src-slices', pattern: 'src/slices/**', mode: 'full' },
+  { type: 'src-features', pattern: 'src/features/**', mode: 'full' },
+];
+
+/*
+ * App config convention (src/config/CONTEXT.md) — the modules the root aggregator assembles.
+ * `types/config.ts` and `mocks/config.ts` are companions, not config modules, and stay out.
+ */
+const APP_CONFIG_MODULE_GLOBS = [
+  'src/api/config.ts',
+  'src/features/**/config.ts',
+  'src/services/*/config.ts',
+  'src/shell/*/config.ts',
+  'src/slices/*/config.ts',
+];
+const APP_CONFIG_COMPANION_GLOBS = [ '**/types/config.ts', '**/mocks/config.ts' ];
+
+const APP_CONFIG_ELEMENTS = [
+  { type: 'app-config-envs', pattern: 'src/config/utils/envs.ts', mode: 'full' },
+  { type: 'app-config-root', pattern: 'src/config/**', mode: 'full' },
+  { type: 'app-config-module', pattern: APP_CONFIG_MODULE_GLOBS.map((glob) => glob.replace('**/config.ts', '**/!(types|mocks)/config.ts')), mode: 'full' },
+  { type: 'app-config-spec', pattern: 'src/**/config.spec.ts', mode: 'full' },
+];
+
+const APP_CONFIG_IMPORT_MESSAGE =
+  'Read app config through the root aggregator: `import config from \'src/config\'`. ' +
+  'Only another config.ts, src/config/** or a config.spec.ts may import a config module directly.';
+
+const APP_CONFIG_ENVS_MESSAGE =
+  'Env values are read only in config modules. Move the getEnvValue / parseEnvJson / getExternalAssetFilePath call into the owning config.ts ' +
+  'and read the structured result via src/config.';
+
+const APP_CONFIG_NAMED_EXPORT_MESSAGE =
+  'A config module exposes only its default export. Put the value inside the config object (widen the Feature payload) ' +
+  'so it is unreachable while the feature is disabled; types and constants go to a sibling role file (types/config.ts, types.ts, consts.ts).';
+
+// app config convention (src/config/CONTEXT.md): the raw runtime env map is read by getEnvValue only
+const WINDOW_ENVS_RESTRICTION = {
+  object: 'window',
+  property: '__envs',
+  message: APP_CONFIG_ENVS_MESSAGE,
+};
+
+const RESTRICTED_SYNTAX = [
+  {
+    selector: 'CallExpression[callee.property.name=\'localeCompare\']',
+    message: 'Use the shared collator from src/shared/texts/collator.ts (collator.compare) instead of String.prototype.localeCompare.',
+  },
+  {
+    selector: 'NewExpression[callee.object.name=\'Intl\'][callee.property.name=\'Collator\']',
+    message: 'Use the shared collator from src/shared/texts/collator.ts instead of constructing Intl.Collator inline.',
+  },
+];
+
 /** @type {import('eslint').Linter.Config[]} */
 export default tseslint.config(
   includeIgnoreFile(gitignorePath),
 
-  { files: [ '**/*.{js,mjs,cjs,ts,jsx,tsx}', '**/*.pw.tsx' ] },
+  { files: [ '**/*.{js,mjs,cjs,ts,mts,jsx,tsx}', '**/*.pw.tsx' ] },
 
   { ignores: [
-    'deploy/tools/',
+    'deploy/tools/*/dist/',
+    'deploy/tools/envs-validator/public/',
+    // generated files that only a nested .gitignore covers; includeIgnoreFile reads the root one alone
+    'deploy/tools/envs-validator/index.js',
+    '.design-sync/.cache/',
     'public/',
     '.git/',
+    // agent worktrees are full checkouts of the repo; linting them doubles the work and can exhaust the heap
+    '.claude/worktrees/',
     'next.config.js',
+    'tools/code-complexity/dist/',
+    'tools/review-screen/dist/',
   ] },
 
   { languageOptions: { globals: { ...globals.browser, ...globals.node } } },
 
-  { settings: { react: { version: 'detect' } } },
+  {
+    settings: {
+      react: { version: 'detect' },
+      // first matching descriptor wins, so the file-level config elements go before the layer-level ones;
+      // the trailing catch-all makes every src file a known element — policies never run from unknown files
+      'boundaries/elements': [ ...APP_CONFIG_ELEMENTS, ...ARCH_BOUNDARY_ELEMENTS, { type: 'src-other', pattern: 'src/**', mode: 'full' } ],
+      'boundaries/dependency-nodes': [ 'import', 'dynamic-import', 'export' ],
+      // without a resolver every import target is "unknown" and no boundaries policy ever matches;
+      // `paths` makes the tsconfig-style root-relative specifiers (src/…, playwright/…) resolvable
+      'import/resolver': {
+        node: {
+          extensions: [ '.ts', '.tsx', '.js', '.mjs' ],
+          paths: [ __dirname ],
+        },
+      },
+    },
+  },
 
   jsPlugin.configs.recommended,
 
@@ -194,6 +362,7 @@ export default tseslint.config(
         },
       } ],
       'react/jsx-equals-spacing': [ 'error', 'never' ],
+      'react/jsx-filename-extension': [ 'error', { allow: 'as-needed', extensions: [ '.tsx' ] } ],
       'react/jsx-fragments': [ 'error', 'syntax' ],
       'react/jsx-no-duplicate-props': 'error',
       'react/jsx-no-target-blank': 'off',
@@ -223,6 +392,17 @@ export default tseslint.config(
       'react/no-unused-state': 'error',
       'react/require-optimization': [ 'error' ],
       'react/void-dom-elements-no-children': 'error',
+    },
+  },
+
+  {
+    // type-aware, so TS files only
+    files: [ '**/*.{ts,tsx}' ],
+    plugins: {
+      '@eslint-react': eslintReactPlugin,
+    },
+    rules: {
+      '@eslint-react/no-leaked-conditional-rendering': 'error',
     },
   },
 
@@ -288,6 +468,83 @@ export default tseslint.config(
     },
   },
 
+  // I have to disable this rule because of performance issues:
+  //    https://github.com/import-js/eslint-plugin-import/issues/3060
+  // Examples in our CI:
+  //    before: 1m15s - https://github.com/blockscout/frontend/actions/runs/23210591334/job/67457992864
+  //    after: 4m27s - https://github.com/blockscout/frontend/actions/runs/25108323146/job/73585871924
+  //
+  // {
+  //   files: [ 'src/**' ],
+  //   plugins: {
+  //     'import': importPlugin,
+  //   },
+  //   rules: {
+  //     'import/no-cycle': [ 'error', { maxDepth: 10 } ],
+  //   },
+  // },
+
+  /*
+   * ARCH_REDESIGN.md §6 — two hard boundaries enforced as ESLint errors.
+   */
+  {
+    files: [
+      'src/**/*.{ts,tsx}',
+    ],
+    plugins: {
+      boundaries: boundariesPlugin,
+    },
+    rules: {
+      'boundaries/element-types': [ 'error', {
+        'default': 'allow',
+        rules: [
+          {
+            // by path, not by element type: `src/api/config.ts` is an `app-config-module` element (a file
+            // is one element only), and the layer policy still applies to it
+            from: { path: 'src/api/**' },
+            disallow: { to: { type: [ 'src-slices', 'src-features' ] }, dependency: { kind: 'value' } },
+          },
+        ],
+      } ],
+    },
+  },
+
+  /*
+   * App config convention (src/config/CONTEXT.md): the root aggregator is the only import surface for
+   * config modules, and env values are read only inside them. Later policies override earlier ones.
+   */
+  {
+    files: [
+      'src/**/*.{ts,tsx}',
+    ],
+    plugins: {
+      boundaries: boundariesPlugin,
+    },
+    rules: {
+      'boundaries/dependencies': [ 'error', {
+        'default': 'allow',
+        rules: [
+          {
+            disallow: { to: { type: 'app-config-module' }, dependency: { kind: 'value' } },
+            message: APP_CONFIG_IMPORT_MESSAGE,
+          },
+          {
+            from: { type: [ 'app-config-module', 'app-config-root', 'app-config-spec' ] },
+            allow: { to: { type: 'app-config-module' } },
+          },
+          {
+            disallow: { to: { type: 'app-config-envs' } },
+            message: APP_CONFIG_ENVS_MESSAGE,
+          },
+          {
+            from: { type: [ 'app-config-module', 'app-config-root' ] },
+            allow: { to: { type: 'app-config-envs' } },
+          },
+        ],
+      } ],
+    },
+  },
+
   {
     plugins: {
       'import-helpers': importHelpersPlugin,
@@ -300,20 +557,16 @@ export default tseslint.config(
           groups: [
             'module',
             '/types/',
-            [ '/^nextjs/' ],
+            [ '/^src/server/' ],
+            [ '/^src/api/' ],
+            [ '/^src/shell/' ],
+            [ '/^src/slices/' ],
+            [ '/^src/features/' ],
+            [ '/^src/config/', '/^src/services/', '/^src/shared/', '/^src/sprite/' ],
+            [ '/^src/toolkit/' ],
             [
-              '/^configs/',
-              '/^data/',
               '/^deploy/',
-              '/^icons/',
-              '/^lib/',
-              '/^mocks/',
-              '/^pages/',
               '/^playwright/',
-              '/^stubs/',
-              '/^theme/',
-              '/^toolkit/',
-              '/^ui/',
               '/^vitest/',
             ],
             [ 'parent', 'sibling', 'index' ],
@@ -336,7 +589,7 @@ export default tseslint.config(
       'consistent-default-export-name': consistentDefaultExportNamePlugin,
     },
     files: [
-      'ui/**/[A-Z]*.tsx',
+      'src/**/*.tsx',
     ],
     ignores: [
       '**/*.pw.*',
@@ -409,6 +662,9 @@ export default tseslint.config(
       '@stylistic/template-curly-spacing': [ 'error', 'always' ],
       '@stylistic/wrap-iife': [ 'error', 'inside' ],
     },
+    ignores: [
+      'next-env.d.ts',
+    ],
   },
 
   {
@@ -424,7 +680,7 @@ export default tseslint.config(
       'no-redeclare': 'off',
 
       // rules customizations
-      eqeqeq: [ 'error', 'allow-null' ],
+      eqeqeq: [ 'error' ],
       'id-match': [ 'error', '^[\\w$]+$' ],
       'max-len': [ 'error', 160, 4 ],
       'no-console': 'error',
@@ -441,42 +697,111 @@ export default tseslint.config(
       'one-var': [ 'error', 'never' ],
       'prefer-const': 'error',
 
-      // restricted imports and properties
-      'no-restricted-imports': [ 'error', RESTRICTED_MODULES ],
-      'no-restricted-properties': [ 2, {
-        object: 'process',
-        property: 'env',
-        // FIXME: restrict the rule only NEXT_PUBLIC variables
-        message: 'Please use configs/app/index.ts to import any NEXT_PUBLIC environment variables. For other properties please disable this rule for a while.',
-      } ],
+      // restricted imports, properties and syntax
+      'no-restricted-syntax': [ 'error', ...RESTRICTED_SYNTAX ],
+      'no-restricted-imports': [ 'error', RESTRICTED_MODULES_WITH_ANALYTICS_VENDORS ],
+      'no-restricted-properties': [ 2,
+        {
+          object: 'process',
+          property: 'env',
+          // FIXME: restrict the rule only NEXT_PUBLIC variables
+          message: 'Please use src/config/index.ts to import any NEXT_PUBLIC environment variables. For other properties please disable this rule for a while.',
+        },
+        WINDOW_ENVS_RESTRICTION,
+      ],
     },
   },
   {
     files: [
-      'pages/**',
-      'nextjs/**',
+      'src/pages/**',
+      'src/server/**',
       'playwright/**',
       'deploy/scripts/**',
       'deploy/tools/**',
-      'middleware.ts',
+      'src/proxy.ts',
       'instrumentation*.ts',
       '*.config.ts',
       '*.config.js',
     ],
     rules: {
-      // for configs allow to consume env variables from process.env directly
-      'no-restricted-properties': 'off',
+      // for configs allow to consume env variables from process.env directly; the raw browser env map stays off-limits
+      'no-restricted-properties': [ 2, WINDOW_ENVS_RESTRICTION ],
+    },
+  },
+  {
+    // the deploy tools are CLIs that run at container startup; console is their output channel
+    files: [ 'deploy/tools/**' ],
+    rules: {
+      'no-console': 'off',
+    },
+  },
+  {
+    // app config convention (src/config/CONTEXT.md): a config module has no export besides the default
+    files: APP_CONFIG_MODULE_GLOBS,
+    ignores: APP_CONFIG_COMPANION_GLOBS,
+    rules: {
+      'no-restricted-syntax': [ 'error',
+        ...RESTRICTED_SYNTAX,
+        { selector: 'ExportNamedDeclaration', message: APP_CONFIG_NAMED_EXPORT_MESSAGE },
+        { selector: 'ExportAllDeclaration', message: APP_CONFIG_NAMED_EXPORT_MESSAGE },
+      ],
+    },
+  },
+  {
+    files: ANALYTICS_VENDOR_ALLOWED_FILES,
+    rules: {
+      'no-restricted-imports': [ 'error', RESTRICTED_MODULES ],
     },
   },
   {
     files: [
-      'toolkit/chakra/**',
-      'toolkit/components/**',
-      'toolkit/package/**',
+      'src/toolkit/chakra/**',
+      'src/toolkit/components/**',
+      'src/toolkit/package/**',
     ],
     rules: {
-      // for toolkit components allow to import @chakra-ui/react directly
-      'no-restricted-imports': 'off',
+      // toolkit components import @chakra-ui/react directly; the package stays framework-neutral, so only the router ban applies
+      'no-restricted-imports': [ 'error', { paths: ROUTER_FRAMEWORK_MODULES } ],
+    },
+  },
+  {
+    files: ROUTER_FRAMEWORK_ALLOWED_FILES,
+    rules: {
+      'no-restricted-imports': [ 'error', {
+        paths: RESTRICTED_MODULES_WITH_ANALYTICS_VENDORS.paths.filter((path) => !ROUTER_FRAMEWORK_MODULE_NAMES.includes(path.name)),
+        patterns: RESTRICTED_MODULES_WITH_ANALYTICS_VENDORS.patterns,
+      } ],
+    },
+  },
+
+  {
+    plugins: { 'spdx-license': { rules: { header: spdxLicenseRule } } },
+    files: [ '**/*.{ts,tsx,js}' ],
+    ignores: [
+      '**/*.d.ts',
+      '**/*.pw.tsx',
+      '**/*.spec.{ts,tsx}',
+      '**/*.config.{ts,js}',
+      '**.config.{ts,js}',
+      '**/mocks/**',
+      '**/mocks.ts',
+      'playwright/**',
+      '**/stubs/**',
+      '**/stubs.ts',
+      'vitest/**',
+      'tools/**',
+      '.agents/**',
+    ],
+    rules: {
+      'spdx-license/header': 'error',
+    },
+  },
+
+  {
+    plugins: { stryker: { rules: { 'well-formed-disable': strykerDisableRule } } },
+    files: [ '**/*.{ts,tsx,mjs,js,cjs}' ],
+    rules: {
+      'stryker/well-formed-disable': 'error',
     },
   },
 );
